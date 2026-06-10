@@ -28,6 +28,25 @@ cfw show <span-id> --lines 120:180
 cfw purge --older-than-days 14
 ```
 
+## Quickstart Smoke
+
+Run these commands inside a real repository:
+
+```bash
+cargo install --path crates/cfw-cli
+cfw policy init
+cfw run -- cargo test
+cfw run -- git diff --stat
+cfw spans
+cfw receipt --json
+```
+
+When a compact result omits detail, use the printed span id to retrieve the local raw evidence:
+
+```bash
+cfw show <span-id> --lines 1:80
+```
+
 ## Install
 
 From source:
@@ -106,3 +125,5 @@ cargo clippy -- -D warnings
 Early implementation. The real local execution path, span ledger, policy routing, receipts, Codex wrapper install, first reducer pack, and hook-native Codex canary are in place. Hook-native Codex enforcement is still gated because the current real canary is negative on `codex-cli 0.139.0`.
 
 See [docs/global-plan.md](docs/global-plan.md) for the build plan.
+See [docs/comparison.md](docs/comparison.md) for positioning against adjacent token-optimization tools.
+See [SECURITY.md](SECURITY.md) for the privacy and security model.

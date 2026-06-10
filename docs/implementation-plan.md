@@ -82,11 +82,19 @@ Only after Phase -1 passes:
 
 ## Phase 4: Loop Detection
 
-Started with strict duplicate-output detection:
+Current duplicate-output detection uses:
 
-- same command text
+- command argv
 - same cwd
 - same exit code
 - same raw output hash
+- repo HEAD when inside a git repo
+- git index tree hash when available
+- selected environment allowlist hash
+- policy engine version and policy config hash
+- direct argv input file hashes when those files are known
 
-Remaining hardening: repo HEAD, index hash, selected env hash, policy version, and input file hashes when known.
+Remaining hardening:
+
+- stdin content hash when commands consume stdin through Context Firewall
+- command-specific dependency fingerprints for package managers and test runners

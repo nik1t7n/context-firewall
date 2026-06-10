@@ -175,16 +175,16 @@ Started. Current launch surface includes:
 - Homebrew formula generation and tap publishing to `context-firewall/homebrew-tap`.
 - GitHub Artifact Attestations in the host phase.
 - sha256 sums and source tarballs.
+- README quickstart smoke commands.
+- comparison table vs RTK, Headroom, and Context Mode.
+- security/privacy doc.
+- contributing guide.
 
 Ship:
 
 - first real tagged release.
 - `HOMEBREW_TAP_TOKEN` repository secret.
 - release smoke test from published artifacts.
-- README demo.
-- comparison table vs RTK, Headroom, Context Mode.
-- security/privacy doc.
-- contributing guide.
 
 Launch claim:
 
