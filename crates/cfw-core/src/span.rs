@@ -41,6 +41,8 @@ pub struct SpanRecord {
     pub policy_action: String,
     pub delivery_status: DeliveryStatus,
     pub delivery_evidence_path: Option<String>,
+    pub repeat_key: String,
+    pub repeat_evidence_json: String,
     pub risk_class: String,
     pub artifact_path: String,
     pub created_at: DateTime<Utc>,

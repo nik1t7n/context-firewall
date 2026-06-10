@@ -255,9 +255,7 @@ fn repeated_identical_command_returns_duplicate_handle() {
             "[context-firewall: duplicate output]",
         ))
         .stdout(predicate::str::contains("previous_span: cfw://span/"))
-        .stdout(predicate::str::contains(
-            "same command, cwd, exit code, and raw output hash",
-        ));
+        .stdout(predicate::str::contains("same repeat fingerprint"));
 
     let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
     spans
@@ -266,6 +264,50 @@ fn repeated_identical_command_returns_duplicate_handle() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"risk_class\": \"deduped\""));
+}
+
+#[test]
+fn changed_input_file_prevents_duplicate_handle_even_with_same_output() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let watched = work.path().join("watched.txt");
+    std::fs::write(&watched, "version one\n").expect("write first input");
+
+    let watched_arg = watched.to_str().expect("utf8 watched path");
+    let script =
+        "BEGIN { while ((getline < ARGV[1]) > 0) {} for (i = 1; i <= 220; i++) print i; exit }";
+
+    let mut first = Command::cargo_bin("cfw").expect("cfw binary");
+    first
+        .env("CFW_DATA_DIR", data.path())
+        .env("CFW_SESSION", "input-fingerprint-session")
+        .current_dir(work.path())
+        .args(["run", "--", "awk", script, watched_arg])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("duplicate output").not());
+
+    std::fs::write(&watched, "version two\n").expect("write second input");
+
+    let mut second = Command::cargo_bin("cfw").expect("cfw binary");
+    second
+        .env("CFW_DATA_DIR", data.path())
+        .env("CFW_SESSION", "input-fingerprint-session")
+        .current_dir(work.path())
+        .args(["run", "--", "awk", script, watched_arg])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("duplicate output").not());
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", data.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"repeat_key\":"))
+        .stdout(predicate::str::contains("\"repeat_evidence_json\":"))
+        .stdout(predicate::str::contains("\"risk_class\": \"deduped\"").not());
 }
 
 #[test]

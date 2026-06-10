@@ -128,16 +128,18 @@ Started. Current repeat detection uses:
 
 - command argv.
 - cwd.
-- stdout/stderr hash.
 - exit code.
+- raw stdout/stderr hash.
+- repo HEAD when inside a git repo.
+- git index tree hash when available.
+- selected env allowlist hash.
+- policy engine version and policy config hash.
+- direct argv input file hashes when the files are known.
 
 Remaining repeat key inputs:
 
-- repo HEAD.
-- index state hash.
-- selected env allowlist hash.
-- policy version.
-- input file hashes when known.
+- stdin content hash when commands consume stdin through Context Firewall.
+- command-specific dependency fingerprints for package managers and test runners.
 
 Never label a situation "unchanged" unless the repeat key proves it.
 

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -12,6 +12,23 @@ use cfw_store::sqlite::Store;
 use chrono::{Duration, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use regex::Regex;
+
+const POLICY_ENGINE_VERSION: &str = "cfw-policy-v1";
+const REPEAT_FINGERPRINT_SCHEMA_VERSION: &str = "cfw.repeat_fingerprint.v1";
+const ENV_REPEAT_ALLOWLIST: &[&str] = &[
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PATH",
+    "NODE_ENV",
+    "RUSTFLAGS",
+    "RUSTUP_TOOLCHAIN",
+    "CARGO_HOME",
+    "RUSTC_WRAPPER",
+    "PYTHONPATH",
+    "VIRTUAL_ENV",
+    "CONDA_PREFIX",
+];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -360,6 +377,11 @@ fn run_command(args: RunArgs) -> Result<()> {
         .with_context(|| format!("could not write {}", stdout_path.display()))?;
     std::fs::write(&stderr_path, output.stderr.as_slice())
         .with_context(|| format!("could not write {}", stderr_path.display()))?;
+    let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
+    let repeat_fingerprint =
+        repeat_fingerprint(&args.command, &cwd, output.status.code(), &hash, &paths)?;
+    let repeat_key = hash_json_value(&repeat_fingerprint);
+
     let meta = serde_json::json!({
         "id": span_id,
         "session_id": session_id,
@@ -370,21 +392,17 @@ fn run_command(args: RunArgs) -> Result<()> {
         "stdout_path": stdout_path.display().to_string(),
         "stderr_path": stderr_path.display().to_string(),
         "combined_path": artifact_path.display().to_string(),
+        "repeat_key": repeat_key.clone(),
+        "repeat_fingerprint": repeat_fingerprint,
     });
     std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta)?)
         .with_context(|| format!("could not write {}", meta_path.display()))?;
 
-    let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-    let duplicate = store.find_duplicate_span(
-        &command_text,
-        &cwd.display().to_string(),
-        output.status.code(),
-        &hash,
-    )?;
+    let duplicate = store.find_duplicate_span_by_repeat_key(&repeat_key)?;
     let mut deduped = false;
     if let Some(previous) = duplicate.as_ref() {
         let duplicate_output = format!(
-            "[context-firewall: duplicate output]\nprevious_span: cfw://span/{}\nproof: same command, cwd, exit code, and raw output hash\nraw output stored for this run; use cfw show {} for the previous copy\n",
+            "[context-firewall: duplicate output]\nprevious_span: cfw://span/{}\nproof: same repeat fingerprint: command, cwd, exit code, raw output hash, git HEAD, git index, selected env hash, policy version, and known input file hashes\nraw output stored for this run; use cfw show {} for the previous copy\n",
             previous.id, previous.id
         );
         if estimate_tokens(&duplicate_output).tokens < estimate_tokens(&reduction.output).tokens {
@@ -414,6 +432,8 @@ fn run_command(args: RunArgs) -> Result<()> {
         policy_action: decision.action.as_str().to_string(),
         delivery_status: DeliveryStatus::AdvisoryWrapper,
         delivery_evidence_path: None,
+        repeat_key,
+        repeat_evidence_json: serde_json::to_string(&repeat_fingerprint)?,
         risk_class: if deduped {
             "deduped"
         } else if reduction.omitted {
@@ -682,6 +702,108 @@ fn load_or_default_policy(paths: &StorePaths) -> Result<Policy> {
     } else {
         Ok(Policy::default())
     }
+}
+
+fn repeat_fingerprint(
+    argv: &[String],
+    cwd: &Path,
+    exit_code: Option<i32>,
+    raw_output_hash: &str,
+    paths: &StorePaths,
+) -> Result<serde_json::Value> {
+    let (env_hash, env_present) = selected_env_hash();
+    Ok(serde_json::json!({
+        "schema_version": REPEAT_FINGERPRINT_SCHEMA_VERSION,
+        "command": argv.join(" "),
+        "argv": argv,
+        "cwd": cwd.display().to_string(),
+        "exit_code": exit_code,
+        "raw_output_hash": raw_output_hash,
+        "git_head": git_output(cwd, &["rev-parse", "--verify", "HEAD"]),
+        "git_index_hash": git_output(cwd, &["write-tree"]),
+        "selected_env": {
+            "allowlist": ENV_REPEAT_ALLOWLIST,
+            "present": env_present,
+            "hash": env_hash,
+        },
+        "policy": {
+            "engine_version": POLICY_ENGINE_VERSION,
+            "config_hash": policy_config_hash(paths)?,
+        },
+        "input_files": input_file_hashes(argv, cwd)?,
+    }))
+}
+
+fn hash_json_value(value: &serde_json::Value) -> String {
+    blake3::hash(value.to_string().as_bytes())
+        .to_hex()
+        .to_string()
+}
+
+fn selected_env_hash() -> (String, Vec<&'static str>) {
+    let mut hasher = blake3::Hasher::new();
+    let mut present = Vec::new();
+    for name in ENV_REPEAT_ALLOWLIST {
+        if let Ok(value) = std::env::var(name) {
+            present.push(*name);
+            hasher.update(name.as_bytes());
+            hasher.update(b"\0");
+            hasher.update(value.as_bytes());
+            hasher.update(b"\0");
+        }
+    }
+    (hasher.finalize().to_hex().to_string(), present)
+}
+
+fn policy_config_hash(paths: &StorePaths) -> Result<Option<String>> {
+    let path = paths.data_dir.join("config.toml");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes =
+        std::fs::read(&path).with_context(|| format!("could not read {}", path.display()))?;
+    Ok(Some(blake3::hash(&bytes).to_hex().to_string()))
+}
+
+fn input_file_hashes(argv: &[String], cwd: &Path) -> Result<Vec<serde_json::Value>> {
+    let mut files = Vec::new();
+    for (idx, arg) in argv.iter().enumerate().skip(1) {
+        if arg.starts_with('-') {
+            continue;
+        }
+        let candidate = cwd.join(arg);
+        if !candidate.is_file() {
+            continue;
+        }
+        let canonical = candidate
+            .canonicalize()
+            .with_context(|| format!("could not canonicalize {}", candidate.display()))?;
+        let bytes = std::fs::read(&canonical)
+            .with_context(|| format!("could not read {}", canonical.display()))?;
+        files.push(serde_json::json!({
+            "argument_index": idx,
+            "argument": arg,
+            "path": canonical.display().to_string(),
+            "bytes": bytes.len(),
+            "hash": blake3::hash(&bytes).to_hex().to_string(),
+        }));
+    }
+    Ok(files)
+}
+
+fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn choose_reducer_kind<'a>(requested: &'a str, reason_code: &str) -> &'a str {

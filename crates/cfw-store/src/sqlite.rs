@@ -57,6 +57,30 @@ impl Store {
             );
             "#,
         )?;
+        self.add_column_if_missing("spans", "repeat_key", "TEXT NOT NULL DEFAULT ''")?;
+        self.add_column_if_missing(
+            "spans",
+            "repeat_evidence_json",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )?;
+        Ok(())
+    }
+
+    fn add_column_if_missing(&self, table: &str, column: &str, definition: &str) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .with_context(|| format!("could not inspect table {table}"))?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for row in rows {
+            if row? == column {
+                return Ok(());
+            }
+        }
+        self.conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
         Ok(())
     }
 
@@ -67,8 +91,8 @@ impl Store {
                 id, session_id, kind, source, command, cwd, exit_code,
                 raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
                 hash, reducer, policy_action, delivery_status, delivery_evidence_path,
-                risk_class, artifact_path, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                risk_class, artifact_path, created_at, repeat_key, repeat_evidence_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             "#,
             params![
                 span.id,
@@ -90,6 +114,8 @@ impl Store {
                 span.risk_class,
                 span.artifact_path,
                 span.created_at.to_rfc3339(),
+                span.repeat_key,
+                span.repeat_evidence_json,
             ],
         )?;
         Ok(())
@@ -127,7 +153,7 @@ impl Store {
             SELECT id, session_id, kind, source, command, cwd, exit_code,
                    raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
                    hash, reducer, policy_action, delivery_status, delivery_evidence_path,
-                   risk_class, artifact_path, created_at
+                   risk_class, artifact_path, created_at, repeat_key, repeat_evidence_json
             FROM spans
             WHERE id = ?1
             "#,
@@ -167,32 +193,28 @@ impl Store {
             risk_class: row.get(16)?,
             artifact_path: row.get(17)?,
             created_at: chrono::DateTime::parse_from_rfc3339(&created_at)?.to_utc(),
+            repeat_key: row.get(19)?,
+            repeat_evidence_json: row.get(20)?,
         }))
     }
 
-    pub fn find_duplicate_span(
+    pub fn find_duplicate_span_by_repeat_key(
         &self,
-        command: &str,
-        cwd: &str,
-        exit_code: Option<i32>,
-        hash: &str,
+        repeat_key: &str,
     ) -> Result<Option<SpanRecord>> {
         let mut stmt = self.conn.prepare(
             r#"
             SELECT id, session_id, kind, source, command, cwd, exit_code,
                    raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
                    hash, reducer, policy_action, delivery_status, delivery_evidence_path,
-                   risk_class, artifact_path, created_at
+                   risk_class, artifact_path, created_at, repeat_key, repeat_evidence_json
             FROM spans
-            WHERE command = ?1
-              AND cwd = ?2
-              AND ((exit_code IS NULL AND ?3 IS NULL) OR exit_code = ?3)
-              AND hash = ?4
+            WHERE repeat_key = ?1
             ORDER BY created_at DESC
             LIMIT 1
             "#,
         )?;
-        let mut rows = stmt.query(params![command, cwd, exit_code, hash])?;
+        let mut rows = stmt.query(params![repeat_key])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
@@ -205,7 +227,7 @@ impl Store {
             SELECT id, session_id, kind, source, command, cwd, exit_code,
                    raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
                    hash, reducer, policy_action, delivery_status, delivery_evidence_path,
-                   risk_class, artifact_path, created_at
+                   risk_class, artifact_path, created_at, repeat_key, repeat_evidence_json
             FROM spans
             ORDER BY created_at DESC
             LIMIT ?1
@@ -250,6 +272,8 @@ impl Store {
                 risk_class: row.get(16)?,
                 artifact_path: row.get(17)?,
                 created_at,
+                repeat_key: row.get(19)?,
+                repeat_evidence_json: row.get(20)?,
             })
         })?;
 
@@ -266,7 +290,7 @@ impl Store {
             SELECT id, session_id, kind, source, command, cwd, exit_code,
                    raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
                    hash, reducer, policy_action, delivery_status, delivery_evidence_path,
-                   risk_class, artifact_path, created_at
+                   risk_class, artifact_path, created_at, repeat_key, repeat_evidence_json
             FROM spans
             WHERE created_at < ?1
             ORDER BY created_at ASC
@@ -287,7 +311,7 @@ impl Store {
             SELECT id, session_id, kind, source, command, cwd, exit_code,
                    raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
                    hash, reducer, policy_action, delivery_status, delivery_evidence_path,
-                   risk_class, artifact_path, created_at
+                   risk_class, artifact_path, created_at, repeat_key, repeat_evidence_json
             FROM spans
             ORDER BY created_at ASC
             "#,
@@ -351,5 +375,7 @@ fn row_to_span(row: &rusqlite::Row<'_>) -> rusqlite::Result<SpanRecord> {
         risk_class: row.get(16)?,
         artifact_path: row.get(17)?,
         created_at,
+        repeat_key: row.get(19)?,
+        repeat_evidence_json: row.get(20)?,
     })
 }
