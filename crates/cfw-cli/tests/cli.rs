@@ -54,3 +54,66 @@ fn doctor_reports_codex_without_claiming_hook_replacement() {
         .success()
         .stdout(predicate::str::contains("hook_replacement_verified: false"));
 }
+
+#[test]
+fn install_codex_wrapper_prints_advisory_snippet() {
+    let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+    install
+        .args(["install", "codex", "--mode", "wrapper"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("mode: wrapper"))
+        .stdout(predicate::str::contains("enforcement: advisory"))
+        .stdout(predicate::str::contains("context-firewall:start"));
+}
+
+#[test]
+fn install_codex_wrapper_writes_agents_block_idempotently() {
+    let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
+
+    let mut first = Command::cargo_bin("cfw").expect("cfw binary");
+    first
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "wrapper",
+            "--write-agents",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("result: Written"));
+
+    let mut second = Command::cargo_bin("cfw").expect("cfw binary");
+    second
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "wrapper",
+            "--write-agents",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("result: AlreadyPresent"));
+
+    let content = std::fs::read_to_string(agents).expect("agents content");
+    assert_eq!(content.matches("context-firewall:start").count(), 1);
+}
+
+#[test]
+fn install_codex_hook_native_is_explicitly_blocked() {
+    let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+    install
+        .args(["install", "codex", "--mode", "hook-native"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("HookReplacementFailed"));
+}

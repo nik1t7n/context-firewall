@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -7,7 +8,7 @@ use cfw_core::token::estimate_tokens;
 use cfw_store::paths::StorePaths;
 use cfw_store::sqlite::Store;
 use chrono::Utc;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -22,6 +23,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Install an explicit agent adapter.
+    Install(InstallArgs),
     /// Run a real command, store raw output, and print compact output.
     Run(RunArgs),
     /// Compact stdin with a deterministic reducer.
@@ -32,6 +35,30 @@ enum Commands {
     Receipt,
     /// Check local Context Firewall and Codex integration health.
     Doctor(DoctorArgs),
+}
+
+#[derive(Debug, Args)]
+struct InstallArgs {
+    /// Adapter target to install.
+    target: String,
+
+    /// Adapter mode.
+    #[arg(long, value_enum, default_value_t = InstallMode::Wrapper)]
+    mode: InstallMode,
+
+    /// Write the managed AGENTS.md block instead of printing it.
+    #[arg(long)]
+    write_agents: bool,
+
+    /// Path to AGENTS.md when --write-agents is set.
+    #[arg(long, default_value = "AGENTS.md")]
+    agents_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum InstallMode {
+    Wrapper,
+    HookNative,
 }
 
 #[derive(Debug, Args)]
@@ -77,12 +104,45 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::Install(args) => install(args),
         Commands::Run(args) => run_command(args),
         Commands::Compact(args) => compact(args),
         Commands::Show(args) => show(args),
         Commands::Receipt => receipt(),
         Commands::Doctor(args) => doctor(args),
     }
+}
+
+fn install(args: InstallArgs) -> Result<()> {
+    if args.target != "codex" {
+        bail!(
+            "unsupported adapter `{}`; only `codex` is available",
+            args.target
+        );
+    }
+
+    match args.mode {
+        InstallMode::HookNative => {
+            bail!(
+                "HookReplacementFailed: hook-native install is blocked until the Codex output-replacement canary passes. Use `cfw install codex --mode wrapper`."
+            );
+        }
+        InstallMode::Wrapper => {
+            println!("Context Firewall Codex adapter");
+            println!("  mode: wrapper");
+            println!("  enforcement: advisory");
+            println!("  hook_replacement_verified: false");
+            if args.write_agents {
+                let outcome = cfw_codex::install::write_wrapper_snippet(&args.agents_path)?;
+                println!("  agents_path: {}", args.agents_path.display());
+                println!("  result: {:?}", outcome);
+            } else {
+                println!();
+                println!("{}", cfw_codex::install::wrapper_snippet());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_command(args: RunArgs) -> Result<()> {
