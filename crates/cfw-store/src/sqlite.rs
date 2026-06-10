@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use cfw_core::span::{DeliveryStatus, SpanRecord};
+use chrono::Utc;
 use rusqlite::{Connection, params};
 
 use crate::paths::StorePaths;
@@ -89,6 +90,32 @@ impl Store {
                 span.risk_class,
                 span.artifact_path,
                 span.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn ensure_session(
+        &self,
+        id: &str,
+        agent: &str,
+        repo_root: Option<&str>,
+        codex_version: Option<&str>,
+        cfw_version: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT OR IGNORE INTO sessions (
+                id, agent, repo_root, started_at, codex_version, cfw_version
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                id,
+                agent,
+                repo_root,
+                Utc::now().to_rfc3339(),
+                codex_version,
+                cfw_version,
             ],
         )?;
         Ok(())

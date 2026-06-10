@@ -206,6 +206,7 @@ fn run_command(args: RunArgs) -> Result<()> {
     let Some((program, rest)) = args.command.split_first() else {
         bail!("CfwExecutionError: missing command");
     };
+    let command_text = args.command.join(" ");
 
     let paths = StorePaths::discover()?;
     let policy = load_or_default_policy(&paths)?;
@@ -224,12 +225,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .with_context(|| {
-            format!(
-                "CfwExecutionError: could not run `{}`",
-                args.command.join(" ")
-            )
-        })?;
+        .with_context(|| format!("CfwExecutionError: could not run `{command_text}`"))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -244,13 +240,39 @@ fn run_command(args: RunArgs) -> Result<()> {
 
     let store = Store::open(&paths)?;
     let session_id = current_session_id();
+    store.ensure_session(
+        &session_id,
+        "cfw",
+        Some(&cwd.display().to_string()),
+        None,
+        Some(env!("CARGO_PKG_VERSION")),
+    )?;
     let span_id = new_id();
     let session_dir = paths.sessions_dir.join(&session_id).join("artifacts");
     std::fs::create_dir_all(&session_dir)
         .with_context(|| format!("could not create {}", session_dir.display()))?;
     let artifact_path = session_dir.join(format!("{span_id}.txt"));
+    let stdout_path = session_dir.join(format!("{span_id}.stdout"));
+    let stderr_path = session_dir.join(format!("{span_id}.stderr"));
+    let meta_path = session_dir.join(format!("{span_id}.meta.json"));
     std::fs::write(&artifact_path, raw.as_bytes())
         .with_context(|| format!("could not write {}", artifact_path.display()))?;
+    std::fs::write(&stdout_path, output.stdout.as_slice())
+        .with_context(|| format!("could not write {}", stdout_path.display()))?;
+    std::fs::write(&stderr_path, output.stderr.as_slice())
+        .with_context(|| format!("could not write {}", stderr_path.display()))?;
+    let meta = serde_json::json!({
+        "id": span_id,
+        "session_id": session_id,
+        "command": command_text,
+        "cwd": cwd.display().to_string(),
+        "exit_code": output.status.code(),
+        "stdout_path": stdout_path.display().to_string(),
+        "stderr_path": stderr_path.display().to_string(),
+        "combined_path": artifact_path.display().to_string(),
+    });
+    std::fs::write(&meta_path, serde_json::to_vec_pretty(&meta)?)
+        .with_context(|| format!("could not write {}", meta_path.display()))?;
 
     let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
     let span = SpanRecord {
@@ -258,7 +280,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         session_id,
         kind: args.kind.clone(),
         source: "cfw_run".to_string(),
-        command: Some(args.command.join(" ")),
+        command: Some(command_text),
         cwd: Some(cwd.display().to_string()),
         exit_code: output.status.code(),
         raw_bytes: raw.len() as i64,

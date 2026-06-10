@@ -24,6 +24,11 @@ fn run_receipt_and_show_use_real_artifacts() {
         .find_map(|line| line.strip_prefix("span: cfw://span/"))
         .expect("span id")
         .to_string();
+    let artifact_dir = temp.path().join("sessions/test-session/artifacts");
+    assert!(artifact_dir.join(format!("{span_id}.txt")).exists());
+    assert!(artifact_dir.join(format!("{span_id}.stdout")).exists());
+    assert!(artifact_dir.join(format!("{span_id}.stderr")).exists());
+    assert!(artifact_dir.join(format!("{span_id}.meta.json")).exists());
 
     let mut receipt = Command::cargo_bin("cfw").expect("cfw binary");
     receipt
