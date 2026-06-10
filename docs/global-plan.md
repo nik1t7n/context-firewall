@@ -166,11 +166,21 @@ Hook-native mode:
 
 ## Phase 6: Open Source Launch
 
+Started. Current launch surface includes:
+
+- GitHub Actions CI for fmt, tests, and clippy.
+- cargo-dist release workflow.
+- release artifacts for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc`.
+- shell and PowerShell installers.
+- Homebrew formula generation and tap publishing to `context-firewall/homebrew-tap`.
+- GitHub Artifact Attestations in the host phase.
+- sha256 sums and source tarballs.
+
 Ship:
 
-- GitHub Actions CI.
-- signed release binaries.
-- Homebrew tap.
+- first real tagged release.
+- `HOMEBREW_TAP_TOKEN` repository secret.
+- release smoke test from published artifacts.
 - README demo.
 - comparison table vs RTK, Headroom, Context Mode.
 - security/privacy doc.

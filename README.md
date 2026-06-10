@@ -28,6 +28,25 @@ cfw show <span-id> --lines 120:180
 cfw purge --older-than-days 14
 ```
 
+## Install
+
+From source:
+
+```bash
+cargo install --path crates/cfw-cli
+```
+
+After the first tagged GitHub release is published:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/context-firewall/context-firewall/releases/latest/download/cfw-installer.sh | sh
+
+brew install context-firewall/tap/cfw
+```
+
+Release artifacts are built by cargo-dist for macOS, Linux, and Windows. The release workflow publishes shell, PowerShell, and Homebrew installers, sha256 sums, source tarballs, and GitHub Artifact Attestations. Homebrew tap publishing requires the repository secret `HOMEBREW_TAP_TOKEN`.
+
 ## Deterministic reducers
 
 Context Firewall does not use an LLM to decide what to hide. It classifies the command, stores the full stdout/stderr locally, and applies a deterministic reducer:
