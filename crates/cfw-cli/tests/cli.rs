@@ -45,13 +45,19 @@ fn run_receipt_and_show_use_real_artifacts() {
         .stdout(predicate::str::contains("advisory_wrapper"));
 
     let mut json_receipt = Command::cargo_bin("cfw").expect("cfw binary");
-    json_receipt
+    let json_receipt_output = json_receipt
         .env("CFW_DATA_DIR", temp.path())
         .args(["receipt", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"net_estimated_saved\""))
-        .stdout(predicate::str::contains("\"advisory_wrapper\""));
+        .stdout(predicate::str::contains("\"advisory_wrapper\""))
+        .get_output()
+        .stdout
+        .clone();
+    let receipt_json: serde_json::Value =
+        serde_json::from_slice(&json_receipt_output).expect("receipt json");
+    assert_eq!(receipt_json["schema_version"], "cfw.receipt.v1");
 
     let mut top = Command::cargo_bin("cfw").expect("cfw binary");
     top.env("CFW_DATA_DIR", temp.path())
@@ -84,6 +90,53 @@ fn run_receipt_and_show_use_real_artifacts() {
         .assert()
         .success()
         .stdout(predicate::str::contains("1: alpha"));
+}
+
+#[test]
+fn receipt_schema_matches_json_contract() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut schema = Command::cargo_bin("cfw").expect("cfw binary");
+    let schema_output = schema
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["receipt", "--schema"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema_json: serde_json::Value =
+        serde_json::from_slice(&schema_output).expect("schema json");
+    assert_eq!(
+        schema_json["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert_eq!(
+        schema_json["properties"]["schema_version"]["const"],
+        "cfw.receipt.v1"
+    );
+    assert_eq!(
+        schema_json["properties"]["recent_spans"]["items"]["properties"]["delivery_status"]["enum"]
+            [1],
+        "advisory_wrapper"
+    );
+
+    let mut receipt = Command::cargo_bin("cfw").expect("cfw binary");
+    let receipt_output = receipt
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["receipt", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let receipt_json: serde_json::Value =
+        serde_json::from_slice(&receipt_output).expect("receipt json");
+    assert_eq!(
+        receipt_json["schema_version"],
+        schema_json["properties"]["schema_version"]["const"]
+    );
+    assert!(receipt_json["recent_spans"].is_array());
 }
 
 #[test]

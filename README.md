@@ -23,6 +23,7 @@ cfw run -- cat app.log
 cfw run -- cat payload.json
 cfw spans
 cfw receipt
+cfw receipt --schema
 cfw show <span-id> --lines 120:180
 cfw purge --older-than-days 14
 ```
@@ -45,6 +46,7 @@ Policy blocks obvious context waste such as dependency/build path reads and bina
 - `cfw spans` lists recent local spans from the SQLite ledger.
 - `cfw show <span-id>` retrieves raw output, with `--lines A:B` for narrow evidence.
 - `cfw show <span-id> --force` is required when raw output looks credential-like.
+- `cfw receipt --schema` prints the JSON Schema for `cfw receipt --json`.
 - `cfw purge --older-than-days N` or `cfw purge --all` deletes local span rows and artifact files from the active data dir.
 - span metadata stores structured `argv` alongside command text, cwd, exit code, and split stdout/stderr artifact paths.
 - repeated command output is deduped only when command, cwd, exit code, and raw output hash match a previous span, and the duplicate receipt is smaller than the normal reduced output.

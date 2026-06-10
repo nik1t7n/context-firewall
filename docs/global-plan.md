@@ -12,6 +12,7 @@ Context Firewall is a standalone Rust workspace with:
 - `cfw spans` ledger inspection.
 - `cfw purge` artifact lifecycle cleanup.
 - `cfw receipt` and `cfw receipt --json`.
+- `cfw receipt --schema`.
 - `cfw top`.
 - `cfw first-run`.
 - `cfw doctor codex`.
@@ -77,9 +78,10 @@ Started. Current spine includes:
 - add purge command.
 - add raw retrieval guard for suspected secrets.
 
-Remaining:
+Current receipt contract:
 
-- add JSON schema for receipts.
+- `cfw receipt --json` emits `schema_version: cfw.receipt.v1`.
+- `cfw receipt --schema` emits the JSON Schema for the receipt payload.
 
 ## Phase 2: Reducer Pack
 

@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 use cfw_core::ids::new_id;
+use cfw_core::receipt::{RECEIPT_SCHEMA_JSON, RECEIPT_SCHEMA_VERSION};
 use cfw_core::span::{DeliveryStatus, SpanRecord};
 use cfw_core::token::estimate_tokens;
 use cfw_policy::{Policy, PolicyAction};
@@ -172,6 +173,10 @@ struct ReceiptArgs {
     /// Emit JSON instead of terminal text.
     #[arg(long)]
     json: bool,
+
+    /// Print the JSON Schema for `cfw receipt --json`.
+    #[arg(long)]
+    schema: bool,
 }
 
 #[derive(Debug, Args)]
@@ -507,6 +512,11 @@ fn spans(args: SpansArgs) -> Result<()> {
 }
 
 fn receipt(args: ReceiptArgs) -> Result<()> {
+    if args.schema {
+        println!("{RECEIPT_SCHEMA_JSON}");
+        return Ok(());
+    }
+
     let paths = StorePaths::discover()?;
     let store = Store::open(&paths)?;
     let spans = store.recent_spans(50)?;
@@ -529,6 +539,7 @@ fn receipt(args: ReceiptArgs) -> Result<()> {
 
     if args.json {
         let payload = serde_json::json!({
+            "schema_version": RECEIPT_SCHEMA_VERSION,
             "spans": spans.len(),
             "raw_estimated_tokens": raw,
             "returned_estimated_tokens": returned,

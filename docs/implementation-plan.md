@@ -36,6 +36,7 @@ Build the real command path first:
 - `cfw show`
 - `cfw spans`
 - `cfw receipt`
+- `cfw receipt --schema`
 - `cfw purge`
 - raw retrieval guard for suspected secrets
 
