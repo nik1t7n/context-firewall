@@ -9,11 +9,15 @@ Context Firewall is a standalone Rust workspace with:
 - raw artifact storage.
 - deterministic generic, test-output, git, search, log, JSON, and outline reducers.
 - `cfw show` retrieval by line range.
+- `cfw spans` ledger inspection.
+- `cfw purge` artifact lifecycle cleanup.
 - `cfw receipt` and `cfw receipt --json`.
 - `cfw top`.
 - `cfw first-run`.
 - `cfw doctor codex`.
 - policy routing for git diffs, tests, search/listing output, logs, JSON, generated reads, denied paths, and binary output.
+- secret-like raw output guard on `cfw show`.
+- structured `argv` in span metadata.
 - explicit Codex wrapper adapter installation.
 - hook-native install blocked until output replacement is proven.
 
@@ -52,7 +56,7 @@ Decision:
 
 ## Phase 1: Local Execution Spine
 
-Already started. Finish hardening:
+Started. Current spine includes:
 
 - split stdout and stderr artifacts instead of combined text only.
 - store command argv as structured JSON.
@@ -60,6 +64,9 @@ Already started. Finish hardening:
 - add `cfw spans`.
 - add purge command.
 - add raw retrieval guard for suspected secrets.
+
+Remaining:
+
 - add JSON schema for receipts.
 
 ## Phase 2: Reducer Pack

@@ -21,8 +21,10 @@ cfw run -- cargo test
 cfw run -- grep -R "TODO" crates
 cfw run -- cat app.log
 cfw run -- cat payload.json
+cfw spans
 cfw receipt
 cfw show <span-id> --lines 120:180
+cfw purge --older-than-days 14
 ```
 
 ## Deterministic reducers
@@ -37,6 +39,14 @@ Context Firewall does not use an LLM to decide what to hide. It classifies the c
 - `outline`: returns headings, imports, and top-level declarations for generated/lock files.
 
 Policy blocks obvious context waste such as dependency/build path reads and binary file output before execution.
+
+## Local evidence lifecycle
+
+- `cfw spans` lists recent local spans from the SQLite ledger.
+- `cfw show <span-id>` retrieves raw output, with `--lines A:B` for narrow evidence.
+- `cfw show <span-id> --force` is required when raw output looks credential-like.
+- `cfw purge --older-than-days N` or `cfw purge --all` deletes local span rows and artifact files from the active data dir.
+- span metadata stores structured `argv` alongside command text, cwd, exit code, and split stdout/stderr artifact paths.
 
 ## Codex
 

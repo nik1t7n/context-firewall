@@ -8,8 +8,9 @@ use cfw_core::token::estimate_tokens;
 use cfw_policy::{Policy, PolicyAction};
 use cfw_store::paths::StorePaths;
 use cfw_store::sqlite::Store;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use regex::Regex;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -34,8 +35,12 @@ enum Commands {
     Compact(CompactArgs),
     /// Show raw artifact output for a span.
     Show(ShowArgs),
+    /// List recent spans from the local ledger.
+    Spans(SpansArgs),
     /// Print a local receipt from recent spans.
     Receipt(ReceiptArgs),
+    /// Delete local span rows and artifacts.
+    Purge(PurgeArgs),
     /// Manage and inspect Context Firewall policy.
     Policy(PolicyArgs),
     /// Show the largest recent context burners.
@@ -94,6 +99,32 @@ struct ShowArgs {
     /// Optional 1-based inclusive line range, formatted A:B.
     #[arg(long)]
     lines: Option<String>,
+
+    /// Bypass secret-like output guard.
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Args)]
+struct SpansArgs {
+    /// Number of spans to show.
+    #[arg(long, default_value_t = 20)]
+    limit: i64,
+
+    /// Emit JSON instead of terminal text.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct PurgeArgs {
+    /// Delete every local span and artifact in this Context Firewall data dir.
+    #[arg(long)]
+    all: bool,
+
+    /// Delete spans older than this many days.
+    #[arg(long)]
+    older_than_days: Option<i64>,
 }
 
 #[derive(Debug, Args)]
@@ -150,7 +181,9 @@ fn main() -> Result<()> {
         Commands::Run(args) => run_command(args),
         Commands::Compact(args) => compact(args),
         Commands::Show(args) => show(args),
+        Commands::Spans(args) => spans(args),
         Commands::Receipt(args) => receipt(args),
+        Commands::Purge(args) => purge(args),
         Commands::Policy(args) => policy(args),
         Commands::Top(args) => top(args),
         Commands::Doctor(args) => doctor(args),
@@ -269,6 +302,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         "command": command_text,
         "cwd": cwd.display().to_string(),
         "exit_code": output.status.code(),
+        "argv": args.command,
         "stdout_path": stdout_path.display().to_string(),
         "stderr_path": stderr_path.display().to_string(),
         "combined_path": artifact_path.display().to_string(),
@@ -344,14 +378,47 @@ fn show(args: ShowArgs) -> Result<()> {
 
     if let Some(range) = args.lines {
         let (start, end) = parse_line_range(&range)?;
+        let mut selected = String::new();
         for (idx, line) in artifact.lines().enumerate() {
             let line_no = idx + 1;
             if line_no >= start && line_no <= end {
-                println!("{line_no}: {line}");
+                selected.push_str(&format!("{line_no}: {line}\n"));
             }
         }
+        guard_secret_like_output(&selected, args.force)?;
+        print!("{selected}");
     } else {
+        guard_secret_like_output(&artifact, args.force)?;
         print!("{artifact}");
+    }
+    Ok(())
+}
+
+fn spans(args: SpansArgs) -> Result<()> {
+    let paths = StorePaths::discover()?;
+    let store = Store::open(&paths)?;
+    let spans = store.recent_spans(args.limit)?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&spans)?);
+        return Ok(());
+    }
+
+    println!("Context Firewall Spans");
+    println!();
+    for span in spans {
+        println!(
+            "{} {} raw={} returned={} delivery={} created={}",
+            &span.id[..12],
+            span.kind,
+            span.raw_estimated_tokens,
+            span.returned_estimated_tokens,
+            span.delivery_status.as_str(),
+            span.created_at.to_rfc3339()
+        );
+        if let Some(command) = span.command {
+            println!("   command: {command}");
+        }
     }
     Ok(())
 }
@@ -484,6 +551,36 @@ fn top(args: TopArgs) -> Result<()> {
     Ok(())
 }
 
+fn purge(args: PurgeArgs) -> Result<()> {
+    if args.all == args.older_than_days.is_some() {
+        bail!("PurgeRequiresScope: pass exactly one of --all or --older-than-days <days>");
+    }
+
+    let paths = StorePaths::discover()?;
+    let store = Store::open(&paths)?;
+    let spans = if args.all {
+        store.all_spans()?
+    } else {
+        let days = args.older_than_days.expect("checked above");
+        if days < 0 {
+            bail!("PurgeRequiresScope: --older-than-days must be >= 0");
+        }
+        let cutoff = Utc::now() - Duration::days(days);
+        store.spans_before(cutoff)?
+    };
+
+    let ids = spans.iter().map(|span| span.id.clone()).collect::<Vec<_>>();
+    let rows_deleted = store.delete_spans(&ids)?;
+    let mut files_deleted = 0usize;
+    for span in &spans {
+        files_deleted += remove_span_artifacts(span)?;
+    }
+
+    println!("purged spans: {rows_deleted}");
+    println!("purged artifact files: {files_deleted}");
+    Ok(())
+}
+
 fn load_or_default_policy(paths: &StorePaths) -> Result<Policy> {
     let policy_path = paths.data_dir.join("config.toml");
     if policy_path.exists() {
@@ -550,4 +647,56 @@ fn parse_line_range(range: &str) -> Result<(usize, usize)> {
         bail!("line range must be 1-based and end must be >= start");
     }
     Ok((start, end))
+}
+
+fn guard_secret_like_output(output: &str, force: bool) -> Result<()> {
+    if force || !looks_secret_like(output) {
+        return Ok(());
+    }
+    bail!(
+        "SecretGuard: output looks like it may contain credentials or private keys; rerun with `--force` only if you intentionally want raw local output"
+    )
+}
+
+fn looks_secret_like(output: &str) -> bool {
+    let patterns = [
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+        r"(?i)\bAWS_SECRET_ACCESS_KEY\b",
+        r"\bghp_[A-Za-z0-9_]{20,}\b",
+        r"\bgithub_pat_[A-Za-z0-9_]{20,}\b",
+        r"\bsk-[A-Za-z0-9_-]{20,}\b",
+        r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b",
+        r#"(?i)\b(api[_-]?key|secret|token)\s*[:=]\s*['"]?[A-Za-z0-9_./+=-]{24,}"#,
+    ];
+    patterns.iter().any(|pattern| {
+        Regex::new(pattern)
+            .expect("valid secret regex")
+            .is_match(output)
+    })
+}
+
+fn remove_span_artifacts(span: &SpanRecord) -> Result<usize> {
+    let artifact = PathBuf::from(&span.artifact_path);
+    let mut candidates = vec![artifact.clone()];
+    let mut stdout_path = artifact.clone();
+    stdout_path.set_extension("stdout");
+    candidates.push(stdout_path);
+    let mut stderr_path = artifact.clone();
+    stderr_path.set_extension("stderr");
+    candidates.push(stderr_path);
+    let mut meta_path = artifact;
+    meta_path.set_extension("meta.json");
+    candidates.push(meta_path);
+
+    let mut deleted = 0usize;
+    for path in candidates {
+        match std::fs::remove_file(&path) {
+            Ok(()) => deleted += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("could not delete {}", path.display()));
+            }
+        }
+    }
+    Ok(deleted)
 }

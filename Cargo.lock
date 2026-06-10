@@ -177,6 +177,7 @@ dependencies = [
  "chrono",
  "clap",
  "predicates",
+ "regex",
  "serde_json",
  "tempfile",
  "tracing",

@@ -28,7 +28,12 @@ fn run_receipt_and_show_use_real_artifacts() {
     assert!(artifact_dir.join(format!("{span_id}.txt")).exists());
     assert!(artifact_dir.join(format!("{span_id}.stdout")).exists());
     assert!(artifact_dir.join(format!("{span_id}.stderr")).exists());
-    assert!(artifact_dir.join(format!("{span_id}.meta.json")).exists());
+    let meta_path = artifact_dir.join(format!("{span_id}.meta.json"));
+    assert!(meta_path.exists());
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(meta_path).expect("meta"))
+            .expect("meta json");
+    assert_eq!(meta["argv"][0], "printf");
 
     let mut receipt = Command::cargo_bin("cfw").expect("cfw binary");
     receipt
@@ -56,12 +61,120 @@ fn run_receipt_and_show_use_real_artifacts() {
         .stdout(predicate::str::contains("Context Firewall Top Burners"))
         .stdout(predicate::str::contains("printf"));
 
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("spans")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Spans"))
+        .stdout(predicate::str::contains("printf"));
+
+    let mut spans_json = Command::cargo_bin("cfw").expect("cfw binary");
+    spans_json
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"session_id\": \"test-session\""));
+
     let mut show = Command::cargo_bin("cfw").expect("cfw binary");
     show.env("CFW_DATA_DIR", temp.path())
         .args(["show", &span_id, "--lines", "1:1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("1: alpha"));
+}
+
+#[test]
+fn show_guards_secret_like_raw_output_unless_forced() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    let output = run
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "secret-session")
+        .args([
+            "run",
+            "--",
+            "printf",
+            "api_key=abcdefghijklmnopqrstuvwxyz123456",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let span_id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("span id")
+        .to_string();
+
+    let mut guarded_show = Command::cargo_bin("cfw").expect("cfw binary");
+    guarded_show
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["show", &span_id])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("SecretGuard"));
+
+    let mut forced_show = Command::cargo_bin("cfw").expect("cfw binary");
+    forced_show
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["show", &span_id, "--force"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("api_key="));
+}
+
+#[test]
+fn purge_all_removes_span_rows_and_artifacts() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    let output = run
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "purge-session")
+        .args(["run", "--", "printf", "alpha"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let span_id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("span id")
+        .to_string();
+    let artifact = temp
+        .path()
+        .join("sessions/purge-session/artifacts")
+        .join(format!("{span_id}.txt"));
+    assert!(artifact.exists());
+
+    let mut purge = Command::cargo_bin("cfw").expect("cfw binary");
+    purge
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["purge", "--all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("purged spans: 1"));
+
+    assert!(!artifact.exists());
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("spans")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Spans"))
+        .stdout(predicate::str::contains("printf").not());
 }
 
 #[test]

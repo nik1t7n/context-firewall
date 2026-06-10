@@ -230,4 +230,97 @@ impl Store {
         }
         Ok(spans)
     }
+
+    pub fn spans_before(&self, cutoff: chrono::DateTime<Utc>) -> Result<Vec<SpanRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, session_id, kind, source, command, cwd, exit_code,
+                   raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
+                   hash, reducer, policy_action, delivery_status, delivery_evidence_path,
+                   risk_class, artifact_path, created_at
+            FROM spans
+            WHERE created_at < ?1
+            ORDER BY created_at ASC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![cutoff.to_rfc3339()], row_to_span)?;
+
+        let mut spans = Vec::new();
+        for row in rows {
+            spans.push(row?);
+        }
+        Ok(spans)
+    }
+
+    pub fn all_spans(&self) -> Result<Vec<SpanRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, session_id, kind, source, command, cwd, exit_code,
+                   raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
+                   hash, reducer, policy_action, delivery_status, delivery_evidence_path,
+                   risk_class, artifact_path, created_at
+            FROM spans
+            ORDER BY created_at ASC
+            "#,
+        )?;
+        let rows = stmt.query_map([], row_to_span)?;
+
+        let mut spans = Vec::new();
+        for row in rows {
+            spans.push(row?);
+        }
+        Ok(spans)
+    }
+
+    pub fn delete_spans(&self, ids: &[String]) -> Result<usize> {
+        let mut deleted = 0usize;
+        for id in ids {
+            deleted += self
+                .conn
+                .execute("DELETE FROM spans WHERE id = ?1", params![id])?;
+        }
+        Ok(deleted)
+    }
+}
+
+fn row_to_span(row: &rusqlite::Row<'_>) -> rusqlite::Result<SpanRecord> {
+    let status: String = row.get(14)?;
+    let delivery_status = match status.as_str() {
+        "replaced_tool_result" => DeliveryStatus::ReplacedToolResult,
+        "advisory_wrapper" => DeliveryStatus::AdvisoryWrapper,
+        "observed_only" => DeliveryStatus::ObservedOnly,
+        "blocked" => DeliveryStatus::Blocked,
+        _ => DeliveryStatus::Unknown,
+    };
+    let created_at: String = row.get(18)?;
+    let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
+        .map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                18,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
+        })?
+        .to_utc();
+    Ok(SpanRecord {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        kind: row.get(2)?,
+        source: row.get(3)?,
+        command: row.get(4)?,
+        cwd: row.get(5)?,
+        exit_code: row.get(6)?,
+        raw_bytes: row.get(7)?,
+        raw_estimated_tokens: row.get(8)?,
+        returned_bytes: row.get(9)?,
+        returned_estimated_tokens: row.get(10)?,
+        hash: row.get(11)?,
+        reducer: row.get(12)?,
+        policy_action: row.get(13)?,
+        delivery_status,
+        delivery_evidence_path: row.get(15)?,
+        risk_class: row.get(16)?,
+        artifact_path: row.get(17)?,
+        created_at,
+    })
 }

@@ -24,7 +24,10 @@ Build the real command path first:
 - deterministic reducer
 - retrieval handle
 - `cfw show`
+- `cfw spans`
 - `cfw receipt`
+- `cfw purge`
+- raw retrieval guard for suspected secrets
 
 ## Phase 1: Reducers
 
