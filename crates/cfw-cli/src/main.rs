@@ -327,12 +327,21 @@ fn run_command(args: RunArgs) -> Result<()> {
     let policy = load_or_default_policy(&paths)?;
     let cwd = std::env::current_dir().context("CfwExecutionError: could not read cwd")?;
     let decision = policy.decide_command(&args.command, &cwd);
-    if decision.action == PolicyAction::Block {
-        bail!(
-            "PolicyBlocked: {} ({})",
-            decision.explanation,
-            decision.reason_code
-        );
+    match decision.action {
+        PolicyAction::Block => {
+            bail!(
+                "PolicyBlocked: {} ({})",
+                decision.explanation,
+                decision.reason_code
+            );
+        }
+        PolicyAction::Ask => {
+            bail!(
+                "PolicyAskRequired: noninteractive `cfw run` cannot ask for approval; command was not executed ({})",
+                decision.reason_code
+            );
+        }
+        _ => {}
     }
 
     let output = Command::new(program)

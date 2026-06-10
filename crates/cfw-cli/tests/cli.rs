@@ -602,6 +602,39 @@ fn policy_blocks_case_variant_denied_path() {
 }
 
 #[test]
+fn policy_ask_fails_noninteractive_without_running_command() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    std::fs::write(
+        data.path().join("config.toml"),
+        "[actions]\nlarge_listing = \"ask\"\n",
+    )
+    .expect("policy config");
+
+    let mut explain = Command::cargo_bin("cfw").expect("cfw binary");
+    explain
+        .env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["policy", "explain", "--", "find", ".", "-maxdepth", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("action: ask"))
+        .stdout(predicate::str::contains("reason: listing_output"));
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "find", ".", "-maxdepth", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("PolicyAskRequired"))
+        .stderr(predicate::str::contains("command was not executed"));
+
+    let artifacts_root = data.path().join("sessions");
+    assert!(!artifacts_root.exists());
+}
+
+#[test]
 fn git_diff_uses_git_reducer_by_policy() {
     let data = TempDir::new().expect("data dir");
     let work = TempDir::new().expect("work dir");

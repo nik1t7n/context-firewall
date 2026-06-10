@@ -118,10 +118,7 @@ Started. Current policy supports:
 - case-insensitive path component matching.
 - generated-file rules.
 - binary-output block.
-
-Remaining:
-
-- noninteractive `ask` failure.
+- noninteractive `ask` actions fail before command execution.
 
 ## Phase 4: Loop Detection
 
