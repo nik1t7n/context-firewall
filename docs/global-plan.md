@@ -93,10 +93,11 @@ Started. Current reducer pack:
 - logs reducer.
 - file outline reducer.
 - browser snapshot reducer.
+- real-output corpus tests for Cargo failures, git diffs, grep output, and jq JSON output.
 
 Remaining:
 
-- deeper real-output fixture corpus.
+- expand real-output corpus across more ecosystems.
 
 Each reducer gets:
 

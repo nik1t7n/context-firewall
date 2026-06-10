@@ -51,10 +51,11 @@ Conservative deterministic reducers shipped so far:
 - JSON
 - file outlines
 - browser snapshots
+- real-output corpus coverage for Cargo, git, grep, and jq outputs
 
 Remaining reducer work:
 
-- larger real-output fixture corpus
+- broader real-output corpus across additional ecosystems
 - stricter failure-preservation invariants per ecosystem
 
 Every reducer must preserve failure-critical evidence and include a retrieval handle whenever anything is omitted.
