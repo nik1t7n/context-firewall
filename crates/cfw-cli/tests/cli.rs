@@ -157,3 +157,45 @@ fn install_codex_hook_native_is_explicitly_blocked() {
         .failure()
         .stderr(predicate::str::contains("HookReplacementFailed"));
 }
+
+#[test]
+fn policy_init_check_and_explain_work() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut init = Command::cargo_bin("cfw").expect("cfw binary");
+    init.env("CFW_DATA_DIR", temp.path())
+        .args(["policy", "init"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("created policy"));
+
+    let mut check = Command::cargo_bin("cfw").expect("cfw binary");
+    check
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["policy", "check"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("policy: ok"));
+
+    let mut explain = Command::cargo_bin("cfw").expect("cfw binary");
+    explain
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["policy", "explain", "--", "git", "diff"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("action: compact"))
+        .stdout(predicate::str::contains("reason: git_diff"));
+}
+
+#[test]
+fn policy_blocks_obvious_dependency_search() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", temp.path())
+        .args(["run", "--", "rg", "needle", "node_modules"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("PolicyBlocked"))
+        .stderr(predicate::str::contains("node_modules_search"));
+}

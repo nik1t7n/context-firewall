@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use cfw_core::ids::new_id;
 use cfw_core::span::{DeliveryStatus, SpanRecord};
 use cfw_core::token::estimate_tokens;
+use cfw_policy::{Policy, PolicyAction};
 use cfw_store::paths::StorePaths;
 use cfw_store::sqlite::Store;
 use chrono::Utc;
@@ -35,6 +36,8 @@ enum Commands {
     Show(ShowArgs),
     /// Print a local receipt from recent spans.
     Receipt(ReceiptArgs),
+    /// Manage and inspect Context Firewall policy.
+    Policy(PolicyArgs),
     /// Show the largest recent context burners.
     Top(TopArgs),
     /// Check local Context Firewall and Codex integration health.
@@ -114,6 +117,26 @@ struct TopArgs {
     limit: i64,
 }
 
+#[derive(Debug, Args)]
+struct PolicyArgs {
+    #[command(subcommand)]
+    command: PolicyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PolicyCommand {
+    /// Create the default policy file if one does not exist.
+    Init,
+    /// Parse and validate the current policy file.
+    Check,
+    /// Explain how policy classifies a command.
+    Explain {
+        /// Command and arguments to classify.
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -128,6 +151,7 @@ fn main() -> Result<()> {
         Commands::Compact(args) => compact(args),
         Commands::Show(args) => show(args),
         Commands::Receipt(args) => receipt(args),
+        Commands::Policy(args) => policy(args),
         Commands::Top(args) => top(args),
         Commands::Doctor(args) => doctor(args),
     }
@@ -183,6 +207,17 @@ fn run_command(args: RunArgs) -> Result<()> {
         bail!("CfwExecutionError: missing command");
     };
 
+    let paths = StorePaths::discover()?;
+    let policy = load_or_default_policy(&paths)?;
+    let decision = policy.decide_command(&args.command);
+    if decision.action == PolicyAction::Block {
+        bail!(
+            "PolicyBlocked: {} ({})",
+            decision.explanation,
+            decision.reason_code
+        );
+    }
+
     let cwd = std::env::current_dir().context("CfwExecutionError: could not read cwd")?;
     let output = Command::new(program)
         .args(rest)
@@ -207,7 +242,6 @@ fn run_command(args: RunArgs) -> Result<()> {
     let raw_estimate = estimate_tokens(&raw);
     let returned_estimate = estimate_tokens(&reduction.output);
 
-    let paths = StorePaths::discover()?;
     let store = Store::open(&paths)?;
     let session_id = current_session_id();
     let span_id = new_id();
@@ -233,7 +267,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         returned_estimated_tokens: returned_estimate.tokens,
         hash,
         reducer: Some(reduction.reducer),
-        policy_action: "compact".to_string(),
+        policy_action: decision.action.as_str().to_string(),
         delivery_status: DeliveryStatus::AdvisoryWrapper,
         delivery_evidence_path: None,
         risk_class: if reduction.omitted {
@@ -366,6 +400,41 @@ fn receipt(args: ReceiptArgs) -> Result<()> {
     Ok(())
 }
 
+fn policy(args: PolicyArgs) -> Result<()> {
+    let paths = StorePaths::discover()?;
+    let policy_path = paths.data_dir.join("config.toml");
+    match args.command {
+        PolicyCommand::Init => {
+            let written = Policy::write_default(&policy_path)?;
+            if written {
+                println!("created policy: {}", policy_path.display());
+            } else {
+                println!("policy already exists: {}", policy_path.display());
+            }
+        }
+        PolicyCommand::Check => {
+            let policy = load_or_default_policy(&paths)?;
+            println!("policy: ok");
+            println!(
+                "  session_estimated_tokens: {}",
+                policy.budgets.session_estimated_tokens
+            );
+            println!(
+                "  tool_output_estimated_tokens: {}",
+                policy.budgets.tool_output_estimated_tokens
+            );
+        }
+        PolicyCommand::Explain { command } => {
+            let policy = load_or_default_policy(&paths)?;
+            let decision = policy.decide_command(&command);
+            println!("action: {}", decision.action.as_str());
+            println!("reason: {}", decision.reason_code);
+            println!("explanation: {}", decision.explanation);
+        }
+    }
+    Ok(())
+}
+
 fn top(args: TopArgs) -> Result<()> {
     let paths = StorePaths::discover()?;
     let store = Store::open(&paths)?;
@@ -389,6 +458,15 @@ fn top(args: TopArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn load_or_default_policy(paths: &StorePaths) -> Result<Policy> {
+    let policy_path = paths.data_dir.join("config.toml");
+    if policy_path.exists() {
+        Policy::load(&policy_path)
+    } else {
+        Ok(Policy::default())
+    }
 }
 
 fn doctor(args: DoctorArgs) -> Result<()> {
