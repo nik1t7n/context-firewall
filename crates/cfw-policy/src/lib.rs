@@ -3,10 +3,13 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Policy {
+    #[serde(default)]
     pub budgets: Budgets,
+    #[serde(default)]
     pub actions: Actions,
+    #[serde(default)]
     pub paths: PathRules,
 }
 
@@ -20,18 +23,33 @@ pub struct Budgets {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Actions {
+    #[serde(default = "default_compact_action")]
     pub large_test_output: PolicyAction,
+    #[serde(default = "default_compact_action")]
     pub large_git_diff: PolicyAction,
+    #[serde(default = "default_store_matches_action")]
     pub large_log: PolicyAction,
+    #[serde(default = "default_block_action")]
     pub binary_file: PolicyAction,
+    #[serde(default = "default_outline_action")]
     pub generated_file_read: PolicyAction,
+    #[serde(default = "default_dedupe_action")]
     pub repeated_unchanged_output: PolicyAction,
+    #[serde(default = "default_block_action")]
     pub node_modules_search: PolicyAction,
+    #[serde(default = "default_store_matches_action")]
+    pub large_search: PolicyAction,
+    #[serde(default = "default_outline_action")]
+    pub large_json: PolicyAction,
+    #[serde(default = "default_store_matches_action")]
+    pub large_listing: PolicyAction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PathRules {
+    #[serde(default)]
     pub deny: Vec<String>,
+    #[serde(default)]
     pub generated: Vec<String>,
 }
 
@@ -70,40 +88,71 @@ pub struct PolicyDecision {
     pub explanation: String,
 }
 
-impl Default for Policy {
+impl Default for Budgets {
     fn default() -> Self {
         Self {
-            budgets: Budgets {
-                session_estimated_tokens: 200_000,
-                turn_estimated_input_tokens: 30_000,
-                tool_output_estimated_tokens: 6_000,
-                artifact_retention_days: 14,
-            },
-            actions: Actions {
-                large_test_output: PolicyAction::Compact,
-                large_git_diff: PolicyAction::Compact,
-                large_log: PolicyAction::StoreAndReturnMatches,
-                binary_file: PolicyAction::Block,
-                generated_file_read: PolicyAction::Outline,
-                repeated_unchanged_output: PolicyAction::Dedupe,
-                node_modules_search: PolicyAction::Block,
-            },
-            paths: PathRules {
-                deny: vec![
-                    "node_modules/**".to_string(),
-                    ".git/**".to_string(),
-                    "target/**".to_string(),
-                    "dist/**".to_string(),
-                    "build/**".to_string(),
-                ],
-                generated: vec![
-                    "**/*.generated.*".to_string(),
-                    "**/generated/**".to_string(),
-                    "**/*.lock".to_string(),
-                ],
-            },
+            session_estimated_tokens: 200_000,
+            turn_estimated_input_tokens: 30_000,
+            tool_output_estimated_tokens: 6_000,
+            artifact_retention_days: 14,
         }
     }
+}
+
+impl Default for Actions {
+    fn default() -> Self {
+        Self {
+            large_test_output: PolicyAction::Compact,
+            large_git_diff: PolicyAction::Compact,
+            large_log: PolicyAction::StoreAndReturnMatches,
+            binary_file: PolicyAction::Block,
+            generated_file_read: PolicyAction::Outline,
+            repeated_unchanged_output: PolicyAction::Dedupe,
+            node_modules_search: PolicyAction::Block,
+            large_search: PolicyAction::StoreAndReturnMatches,
+            large_json: PolicyAction::Outline,
+            large_listing: PolicyAction::StoreAndReturnMatches,
+        }
+    }
+}
+
+impl Default for PathRules {
+    fn default() -> Self {
+        Self {
+            deny: vec![
+                "node_modules/**".to_string(),
+                ".git/**".to_string(),
+                "target/**".to_string(),
+                "dist/**".to_string(),
+                "build/**".to_string(),
+            ],
+            generated: vec![
+                "**/*.generated.*".to_string(),
+                "**/generated/**".to_string(),
+                "**/*.lock".to_string(),
+            ],
+        }
+    }
+}
+
+fn default_compact_action() -> PolicyAction {
+    PolicyAction::Compact
+}
+
+fn default_store_matches_action() -> PolicyAction {
+    PolicyAction::StoreAndReturnMatches
+}
+
+fn default_block_action() -> PolicyAction {
+    PolicyAction::Block
+}
+
+fn default_outline_action() -> PolicyAction {
+    PolicyAction::Outline
+}
+
+fn default_dedupe_action() -> PolicyAction {
+    PolicyAction::Dedupe
 }
 
 impl Policy {
@@ -138,16 +187,36 @@ impl Policy {
         }
 
         let joined = argv.join(" ");
+        let lower_joined = joined.to_ascii_lowercase();
         let program = argv[0].as_str();
 
-        if joined.contains("node_modules")
-            && matches!(program, "rg" | "grep" | "find" | "tree" | "ls")
+        if matches!(
+            program,
+            "rg" | "grep"
+                | "ag"
+                | "ack"
+                | "find"
+                | "tree"
+                | "ls"
+                | "cat"
+                | "tail"
+                | "less"
+                | "head"
+        ) && argv.iter().skip(1).any(|arg| is_denied_path(arg))
         {
             return PolicyDecision {
                 action: self.actions.node_modules_search,
-                reason_code: "node_modules_search",
-                explanation: "searching dependency directories is usually context waste"
+                reason_code: "denied_path",
+                explanation: "command targets dependency, VCS, build, or artifact paths"
                     .to_string(),
+            };
+        }
+
+        if argv.iter().any(|arg| looks_binary_path(arg)) {
+            return PolicyDecision {
+                action: self.actions.binary_file,
+                reason_code: "binary_file",
+                explanation: "binary outputs are not useful as model-visible context".to_string(),
             };
         }
 
@@ -160,6 +229,22 @@ impl Policy {
             };
         }
 
+        if matches!(program, "rg" | "grep" | "ag" | "ack") {
+            return PolicyDecision {
+                action: self.actions.large_search,
+                reason_code: "search_output",
+                explanation: "search results are grouped by file and capped per file".to_string(),
+            };
+        }
+
+        if matches!(program, "find" | "tree" | "ls") {
+            return PolicyDecision {
+                action: self.actions.large_listing,
+                reason_code: "listing_output",
+                explanation: "large path listings are capped and stored locally".to_string(),
+            };
+        }
+
         if is_test_command(argv) {
             return PolicyDecision {
                 action: self.actions.large_test_output,
@@ -169,11 +254,39 @@ impl Policy {
             };
         }
 
-        if matches!(program, "cat" | "tail" | "less") && joined.ends_with(".log") {
+        if matches!(program, "cat" | "tail" | "less" | "head")
+            && argv.iter().any(|arg| arg.ends_with(".log"))
+        {
             return PolicyDecision {
                 action: self.actions.large_log,
                 reason_code: "large_log",
                 explanation: "log output is stored and reduced to relevant matches".to_string(),
+            };
+        }
+
+        if matches!(program, "cat" | "tail" | "less" | "head")
+            && argv.iter().any(|arg| looks_generated_path(arg))
+        {
+            return PolicyDecision {
+                action: self.actions.generated_file_read,
+                reason_code: "generated_file_read",
+                explanation: "generated or lock files are outlined instead of pasted in full"
+                    .to_string(),
+            };
+        }
+
+        if (matches!(program, "cat" | "tail" | "less" | "head")
+            && argv
+                .iter()
+                .any(|arg| arg.ends_with(".json") || arg.ends_with(".jsonl")))
+            || matches!(program, "jq")
+            || lower_joined.contains(" --json")
+        {
+            return PolicyDecision {
+                action: self.actions.large_json,
+                reason_code: "json_output",
+                explanation: "JSON output is reduced to structure, counts, and scalar samples"
+                    .to_string(),
             };
         }
 
@@ -184,6 +297,42 @@ impl Policy {
                 .to_string(),
         }
     }
+}
+
+fn is_denied_path(value: &str) -> bool {
+    let normalized = value.replace('\\', "/");
+    path_has_component(&normalized, "node_modules")
+        || path_has_component(&normalized, ".git")
+        || (normalized.contains('/')
+            && (path_has_component(&normalized, "target")
+                || path_has_component(&normalized, "dist")
+                || path_has_component(&normalized, "build")))
+}
+
+fn path_has_component(path: &str, component: &str) -> bool {
+    path.split('/').any(|part| part == component)
+}
+
+fn looks_generated_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains(".generated.")
+        || lower.contains("/generated/")
+        || lower.ends_with(".lock")
+        || lower.ends_with("package-lock.json")
+        || lower.ends_with("pnpm-lock.yaml")
+        || lower.ends_with("yarn.lock")
+        || lower.ends_with("cargo.lock")
+}
+
+fn looks_binary_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    [
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".tar", ".gz", ".tgz",
+        ".xz", ".7z", ".dmg", ".sqlite", ".db", ".wasm", ".so", ".dylib", ".a", ".o", ".rlib",
+        ".mp4", ".mov", ".mp3", ".wav",
+    ]
+    .iter()
+    .any(|suffix| lower.ends_with(suffix))
 }
 
 fn is_test_command(argv: &[String]) -> bool {
@@ -227,6 +376,30 @@ mod tests {
             "node_modules".to_string(),
         ]);
         assert_eq!(decision.action, PolicyAction::Block);
-        assert_eq!(decision.reason_code, "node_modules_search");
+        assert_eq!(decision.reason_code, "denied_path");
+    }
+
+    #[test]
+    fn search_commands_use_search_reducer_policy() {
+        let policy = Policy::default();
+        let decision = policy.decide_command(&["rg".to_string(), "needle".to_string()]);
+        assert_eq!(decision.action, PolicyAction::StoreAndReturnMatches);
+        assert_eq!(decision.reason_code, "search_output");
+    }
+
+    #[test]
+    fn generated_reads_use_outline_policy() {
+        let policy = Policy::default();
+        let decision = policy.decide_command(&["cat".to_string(), "Cargo.lock".to_string()]);
+        assert_eq!(decision.action, PolicyAction::Outline);
+        assert_eq!(decision.reason_code, "generated_file_read");
+    }
+
+    #[test]
+    fn binary_reads_are_blocked() {
+        let policy = Policy::default();
+        let decision = policy.decide_command(&["cat".to_string(), "image.png".to_string()]);
+        assert_eq!(decision.action, PolicyAction::Block);
+        assert_eq!(decision.reason_code, "binary_file");
     }
 }

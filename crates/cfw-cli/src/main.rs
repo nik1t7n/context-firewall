@@ -499,6 +499,11 @@ fn choose_reducer_kind<'a>(requested: &'a str, reason_code: &str) -> &'a str {
     }
     match reason_code {
         "git_diff" => "git",
+        "generated_file_read" => "outline",
+        "json_output" => "json",
+        "large_log" => "log",
+        "listing_output" => "search",
+        "search_output" => "search",
         "test_output" => "test-output",
         _ => requested,
     }

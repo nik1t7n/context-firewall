@@ -28,7 +28,7 @@ Build the real command path first:
 
 ## Phase 1: Reducers
 
-Ship conservative deterministic reducers:
+Conservative deterministic reducers shipped so far:
 
 - test output
 - git output
@@ -36,6 +36,12 @@ Ship conservative deterministic reducers:
 - logs
 - JSON
 - file outlines
+
+Remaining reducer work:
+
+- browser snapshots
+- larger real-output fixture corpus
+- stricter failure-preservation invariants per ecosystem
 
 Every reducer must preserve failure-critical evidence and include a retrieval handle whenever anything is omitted.
 
@@ -56,4 +62,3 @@ Only after Phase -1 passes:
 - trust/load/run/replacement verification
 - uninstall rollback
 - delivery evidence paths
-

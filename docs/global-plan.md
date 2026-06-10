@@ -7,12 +7,13 @@ Context Firewall is a standalone Rust workspace with:
 - `cfw run -- <command>` real command execution.
 - local SQLite span ledger.
 - raw artifact storage.
-- deterministic generic and test-output reducers.
+- deterministic generic, test-output, git, search, log, JSON, and outline reducers.
 - `cfw show` retrieval by line range.
 - `cfw receipt` and `cfw receipt --json`.
 - `cfw top`.
 - `cfw first-run`.
 - `cfw doctor codex`.
+- policy routing for git diffs, tests, search/listing output, logs, JSON, generated reads, denied paths, and binary output.
 - explicit Codex wrapper adapter installation.
 - hook-native install blocked until output replacement is proven.
 
@@ -63,14 +64,18 @@ Already started. Finish hardening:
 
 ## Phase 2: Reducer Pack
 
-Add deterministic reducers:
+Started. Current reducer pack:
 
-- git status/diff/log/show.
+- git diff output.
 - ripgrep/grep/find/tree/search output.
 - JSON shape reducer.
 - logs reducer.
-- browser snapshot reducer.
 - file outline reducer.
+
+Remaining:
+
+- browser snapshot reducer.
+- deeper real-output fixture corpus.
 
 Each reducer gets:
 
@@ -81,7 +86,7 @@ Each reducer gets:
 
 ## Phase 3: Policy Engine
 
-Add:
+Started. Current policy supports:
 
 - `cfw policy init`.
 - `cfw policy check`.
@@ -89,6 +94,9 @@ Add:
 - path deny rules.
 - generated-file rules.
 - binary-output block.
+
+Remaining:
+
 - noninteractive `ask` failure.
 - symlink escape tests.
 - macOS case-insensitive path tests.
@@ -149,4 +157,3 @@ After Codex:
 - Cursor/Cline rules mode.
 - OpenClaw middleware.
 - MCP server.
-

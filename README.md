@@ -18,9 +18,25 @@ The first target is Codex. The first honest adapter mode is wrapper mode: agents
 ```bash
 cfw first-run
 cfw run -- cargo test
+cfw run -- grep -R "TODO" crates
+cfw run -- cat app.log
+cfw run -- cat payload.json
 cfw receipt
 cfw show <span-id> --lines 120:180
 ```
+
+## Deterministic reducers
+
+Context Firewall does not use an LLM to decide what to hide. It classifies the command, stores the full stdout/stderr locally, and applies a deterministic reducer:
+
+- `test-output`: preserves failures, panics, assertions, summaries, head, and tail.
+- `git`: preserves diff headers, hunk headers, changed lines, and conflict markers.
+- `search`: groups grep/rg/ag/ack matches by file and caps matches per file.
+- `log`: preserves log edges plus severity/error context.
+- `json`: returns JSON shape, collection sizes, and small scalar samples.
+- `outline`: returns headings, imports, and top-level declarations for generated/lock files.
+
+Policy blocks obvious context waste such as dependency/build path reads and binary file output before execution.
 
 ## Codex
 
@@ -49,6 +65,6 @@ cargo clippy -- -D warnings
 
 ## Status
 
-Early implementation. The project intentionally starts with the real local execution path before any hosted service, cloud telemetry, or LLM-based compression.
+Early implementation. The real local execution path, span ledger, policy routing, receipts, Codex wrapper install, and first reducer pack are in place. Hook-native Codex enforcement is still gated on the output-replacement canary.
 
 See [docs/global-plan.md](docs/global-plan.md) for the build plan.

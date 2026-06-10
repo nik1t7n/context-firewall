@@ -202,7 +202,7 @@ fn policy_blocks_obvious_dependency_search() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("PolicyBlocked"))
-        .stderr(predicate::str::contains("node_modules_search"));
+        .stderr(predicate::str::contains("denied_path"));
 }
 
 #[test]
@@ -239,4 +239,106 @@ fn git_diff_uses_git_reducer_by_policy() {
         .assert()
         .success()
         .stdout(predicate::str::contains(" git "));
+}
+
+#[test]
+fn search_output_uses_search_reducer_by_policy() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let haystack = work.path().join("haystack.txt");
+    let content = (1..=150)
+        .map(|idx| format!("needle line {idx}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&haystack, content).expect("haystack");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "grep", "-Hn", "needle", "haystack.txt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "[context-firewall: search summary]",
+        ))
+        .stdout(predicate::str::contains("haystack.txt"));
+
+    let mut explain = Command::cargo_bin("cfw").expect("cfw binary");
+    explain
+        .env("CFW_DATA_DIR", data.path())
+        .args([
+            "policy",
+            "explain",
+            "--",
+            "grep",
+            "-Hn",
+            "needle",
+            "haystack.txt",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reason: search_output"));
+}
+
+#[test]
+fn logs_json_and_generated_files_route_to_specialized_reducers() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+
+    let log_path = work.path().join("app.log");
+    let log_content = (1..=150)
+        .map(|idx| {
+            if idx == 80 {
+                "ERROR connection refused".to_string()
+            } else {
+                format!("INFO heartbeat {idx}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&log_path, log_content).expect("log");
+
+    let json_path = work.path().join("payload.json");
+    std::fs::write(
+        &json_path,
+        serde_json::json!({"items": [1, 2, 3, 4], "ok": true}).to_string(),
+    )
+    .expect("json");
+
+    let generated_path = work.path().join("client.generated.ts");
+    std::fs::write(
+        &generated_path,
+        "import x from 'x';\n\nexport function generatedClient() {\n  return x;\n}\n",
+    )
+    .expect("generated");
+
+    let mut log_run = Command::cargo_bin("cfw").expect("cfw binary");
+    log_run
+        .env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "cat", "app.log"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ERROR connection refused"))
+        .stdout(predicate::str::contains("omitted lines"));
+
+    let mut json_run = Command::cargo_bin("cfw").expect("cfw binary");
+    json_run
+        .env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "cat", "payload.json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[context-firewall: json shape]"))
+        .stdout(predicate::str::contains("$.items: array(len=4)"));
+
+    let mut generated_run = Command::cargo_bin("cfw").expect("cfw binary");
+    generated_run
+        .env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "cat", "client.generated.ts"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[context-firewall: file outline]"))
+        .stdout(predicate::str::contains("generatedClient"));
 }
