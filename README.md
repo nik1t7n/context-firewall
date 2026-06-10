@@ -64,9 +64,12 @@ cfw doctor codex
 Hook-native mode is intentionally blocked until a real output-replacement canary proves that Codex sees compact output instead of raw output.
 
 ```bash
+cfw canary codex-hook-replacement
 cfw install codex --mode hook-native
 # HookReplacementFailed until the canary passes.
 ```
+
+Current real canary result on `codex-cli 0.139.0`: `codex exec` runs the shell command as a `command_execution` item, but the configured `PostToolUse` hook is not invoked. Context Firewall therefore keeps hook-native install fail-closed and does not claim replacement savings for Codex hook mode yet.
 
 ## Development
 
@@ -78,6 +81,6 @@ cargo clippy -- -D warnings
 
 ## Status
 
-Early implementation. The real local execution path, span ledger, policy routing, receipts, Codex wrapper install, and first reducer pack are in place. Hook-native Codex enforcement is still gated on the output-replacement canary.
+Early implementation. The real local execution path, span ledger, policy routing, receipts, Codex wrapper install, first reducer pack, and hook-native Codex canary are in place. Hook-native Codex enforcement is still gated because the current real canary is negative on `codex-cli 0.139.0`.
 
 See [docs/global-plan.md](docs/global-plan.md) for the build plan.

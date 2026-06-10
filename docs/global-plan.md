@@ -21,6 +21,7 @@ Context Firewall is a standalone Rust workspace with:
 - proof-based duplicate output detection using command, cwd, exit code, and raw output hash, applied only when the duplicate receipt is smaller than the normal reduced output.
 - explicit Codex wrapper adapter installation.
 - Codex wrapper dry-run and managed block uninstall.
+- real `cfw canary codex-hook-replacement` command.
 - hook-native install blocked until output replacement is proven.
 
 ## North Star
@@ -43,13 +44,22 @@ Goal: prove or disprove hook-native enforcement.
 
 Tasks:
 
-- Build a minimal managed Codex hook prototype.
-- Emit a large unique raw marker from a real Codex shell command.
-- Store raw output as an artifact.
-- Return compact replacement output through `PostToolUse` hook feedback.
-- Verify raw marker is absent from the model-visible transcript/tool result.
+- Build a minimal managed Codex hook prototype. Done.
+- Emit a large unique raw marker from a real Codex shell command. Done.
+- Store raw output as evidence. Done.
+- Return compact replacement output through `PostToolUse` hook feedback. Implemented, but not observed in `codex exec`.
+- Verify raw marker is absent from the model-visible transcript/tool result. Implemented; currently fails on `codex-cli 0.139.0`.
 - Record delivery status as `replaced_tool_result` only when proven.
 - Add negative canary for hook failure.
+
+Latest real result:
+
+- Codex version: `codex-cli 0.139.0`.
+- Evidence command: `cfw canary codex-hook-replacement`.
+- Result: `verified=false`.
+- Observed event shape: shell execution is emitted as `command_execution`.
+- Hook evidence: `hook-input.json` and `hook-output.json` are absent.
+- Model-visible evidence: the final response contains the raw marker and does not contain the compact marker.
 
 Decision:
 

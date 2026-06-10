@@ -14,6 +14,16 @@ The canary must:
 
 If the canary fails, hook-native mode remains observer-only and wrapper mode is v1.
 
+Current implementation status:
+
+- `cfw canary codex-hook-replacement` creates an isolated evidence workspace.
+- It runs a real `codex exec` session with a unique raw marker.
+- It writes project hook config, project `hooks.json`, a temporary Codex profile config, and CLI config overrides.
+- It verifies hook input, hook output, final model-visible output, and Codex JSONL events.
+- Real canary evidence on `codex-cli 0.139.0` is negative: the shell command appears as `command_execution`, the raw marker reaches the final model-visible response, and the `PostToolUse` hook does not run.
+
+This is a fail-closed gate, not a soft warning. Hook-native install must remain blocked until this canary is green on the supported Codex version.
+
 ## Phase 0: Local Execution Spine
 
 Build the real command path first:

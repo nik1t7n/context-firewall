@@ -49,6 +49,8 @@ enum Commands {
     Top(TopArgs),
     /// Check local Context Firewall and Codex integration health.
     Doctor(DoctorArgs),
+    /// Run real integration canaries.
+    Canary(CanaryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -151,6 +153,21 @@ struct DoctorArgs {
 }
 
 #[derive(Debug, Args)]
+struct CanaryArgs {
+    /// Canary target to run.
+    #[arg(value_name = "TARGET")]
+    target: String,
+
+    /// Codex binary to execute.
+    #[arg(long, default_value = "codex")]
+    codex_bin: String,
+
+    /// Optional model override for the real Codex exec run.
+    #[arg(long)]
+    model: Option<String>,
+}
+
+#[derive(Debug, Args)]
 struct ReceiptArgs {
     /// Emit JSON instead of terminal text.
     #[arg(long)]
@@ -204,6 +221,7 @@ fn main() -> Result<()> {
         Commands::Policy(args) => policy(args),
         Commands::Top(args) => top(args),
         Commands::Doctor(args) => doctor(args),
+        Commands::Canary(args) => canary(args),
     }
 }
 
@@ -680,7 +698,13 @@ fn doctor(args: DoctorArgs) -> Result<()> {
     println!("  store: ok");
 
     if args.target.as_deref() == Some("codex") {
-        let codex = cfw_codex::doctor::check();
+        let mut codex = cfw_codex::doctor::check();
+        let evidence_path = codex_canary_evidence_path(&paths);
+        let verified =
+            cfw_codex::canary::load_latest_verified(&evidence_path, codex.version.as_deref())?;
+        if verified.is_some() {
+            codex.hook_replacement_verified = true;
+        }
         println!("Codex");
         println!("  found: {}", codex.codex_found);
         println!(
@@ -693,13 +717,59 @@ fn doctor(args: DoctorArgs) -> Result<()> {
         );
         if !codex.hook_replacement_verified {
             println!("  mode: wrapper/observer only until output-replacement canary passes");
+        } else {
+            println!("  mode: hook-native eligible");
+            println!("  evidence_path: {}", evidence_path.display());
         }
     }
     Ok(())
 }
 
+fn canary(args: CanaryArgs) -> Result<()> {
+    if args.target != "codex-hook-replacement" {
+        bail!(
+            "unsupported canary `{}`; use `codex-hook-replacement`",
+            args.target
+        );
+    }
+
+    let paths = StorePaths::discover()?;
+    paths.ensure()?;
+    let result =
+        cfw_codex::canary::run_output_replacement_canary(cfw_codex::canary::CanaryOptions {
+            evidence_root: paths.data_dir.join("canaries"),
+            codex_bin: args.codex_bin,
+            model: args.model,
+        })?;
+
+    println!("Context Firewall Codex hook replacement canary");
+    println!("  verified: {}", result.verified);
+    println!("  reason: {}", result.reason);
+    println!(
+        "  codex_version: {}",
+        result.codex_version.as_deref().unwrap_or("unknown")
+    );
+    println!("  workspace_path: {}", result.workspace_path);
+    println!("  events_path: {}", result.events_path);
+    println!("  last_message_path: {}", result.last_message_path);
+    println!("  hook_input_path: {}", result.hook_input_path);
+
+    if result.verified {
+        let evidence_path = codex_canary_evidence_path(&paths);
+        cfw_codex::canary::write_latest_verified(&evidence_path, &result)?;
+        println!("  persisted_evidence_path: {}", evidence_path.display());
+        return Ok(());
+    }
+
+    bail!("{}", result.reason)
+}
+
 fn current_session_id() -> String {
     std::env::var("CFW_SESSION").unwrap_or_else(|_| "local".to_string())
+}
+
+fn codex_canary_evidence_path(paths: &StorePaths) -> PathBuf {
+    paths.data_dir.join("codex-hook-canary.json")
 }
 
 fn parse_line_range(range: &str) -> Result<(usize, usize)> {
