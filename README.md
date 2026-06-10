@@ -54,7 +54,9 @@ Wrapper mode is available now:
 
 ```bash
 cfw install codex --mode wrapper
+cfw install codex --mode wrapper --write-agents --dry-run
 cfw install codex --mode wrapper --write-agents
+cfw uninstall codex
 cfw doctor codex
 ```
 

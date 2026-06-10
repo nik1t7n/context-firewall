@@ -27,6 +27,8 @@ struct Cli {
 enum Commands {
     /// Install an explicit agent adapter.
     Install(InstallArgs),
+    /// Remove an explicit agent adapter.
+    Uninstall(UninstallArgs),
     /// Run a guided local command to prove the storage and receipt path works.
     FirstRun,
     /// Run a real command, store raw output, and print compact output.
@@ -62,7 +64,21 @@ struct InstallArgs {
     #[arg(long)]
     write_agents: bool,
 
+    /// Print the planned write without modifying files.
+    #[arg(long)]
+    dry_run: bool,
+
     /// Path to AGENTS.md when --write-agents is set.
+    #[arg(long, default_value = "AGENTS.md")]
+    agents_path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct UninstallArgs {
+    /// Adapter target to uninstall.
+    target: String,
+
+    /// Path to AGENTS.md containing the managed block.
     #[arg(long, default_value = "AGENTS.md")]
     agents_path: PathBuf,
 }
@@ -177,6 +193,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Install(args) => install(args),
+        Commands::Uninstall(args) => uninstall(args),
         Commands::FirstRun => first_run(),
         Commands::Run(args) => run_command(args),
         Commands::Compact(args) => compact(args),
@@ -223,15 +240,40 @@ fn install(args: InstallArgs) -> Result<()> {
             println!("  enforcement: advisory");
             println!("  hook_replacement_verified: false");
             if args.write_agents {
-                let outcome = cfw_codex::install::write_wrapper_snippet(&args.agents_path)?;
+                let outcome = if args.dry_run {
+                    cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?
+                } else {
+                    cfw_codex::install::write_wrapper_snippet(&args.agents_path)?
+                };
                 println!("  agents_path: {}", args.agents_path.display());
+                println!("  dry_run: {}", args.dry_run);
                 println!("  result: {:?}", outcome);
+                if args.dry_run {
+                    println!();
+                    println!("{}", cfw_codex::install::wrapper_snippet());
+                }
             } else {
                 println!();
                 println!("{}", cfw_codex::install::wrapper_snippet());
             }
         }
     }
+    Ok(())
+}
+
+fn uninstall(args: UninstallArgs) -> Result<()> {
+    if args.target != "codex" {
+        bail!(
+            "unsupported adapter `{}`; only `codex` is available",
+            args.target
+        );
+    }
+
+    let outcome = cfw_codex::install::uninstall_wrapper_snippet(&args.agents_path)?;
+    println!("Context Firewall Codex adapter");
+    println!("  mode: wrapper");
+    println!("  agents_path: {}", args.agents_path.display());
+    println!("  result: {:?}", outcome);
     Ok(())
 }
 

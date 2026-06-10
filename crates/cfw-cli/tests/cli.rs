@@ -267,6 +267,86 @@ fn install_codex_wrapper_writes_agents_block_idempotently() {
 }
 
 #[test]
+fn install_codex_wrapper_dry_run_does_not_write_agents_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
+
+    let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+    install
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "wrapper",
+            "--write-agents",
+            "--dry-run",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dry_run: true"))
+        .stdout(predicate::str::contains("result: Written"))
+        .stdout(predicate::str::contains("context-firewall:start"));
+
+    assert!(!agents.exists());
+}
+
+#[test]
+fn uninstall_codex_wrapper_removes_only_managed_agents_block() {
+    let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
+    std::fs::write(&agents, "# Project Rules\n\nKeep this line.\n").expect("agents seed");
+
+    let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+    install
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "wrapper",
+            "--write-agents",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("result: Written"));
+
+    let mut uninstall = Command::cargo_bin("cfw").expect("cfw binary");
+    uninstall
+        .current_dir(temp.path())
+        .args([
+            "uninstall",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("result: Removed"));
+
+    let content = std::fs::read_to_string(&agents).expect("agents content");
+    assert!(content.contains("Keep this line."));
+    assert!(!content.contains("context-firewall:start"));
+
+    let mut second = Command::cargo_bin("cfw").expect("cfw binary");
+    second
+        .current_dir(temp.path())
+        .args([
+            "uninstall",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("result: AlreadyAbsent"));
+}
+
+#[test]
 fn install_codex_hook_native_is_explicitly_blocked() {
     let mut install = Command::cargo_bin("cfw").expect("cfw binary");
     install

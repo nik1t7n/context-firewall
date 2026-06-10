@@ -19,6 +19,7 @@ Context Firewall is a standalone Rust workspace with:
 - secret-like raw output guard on `cfw show`.
 - structured `argv` in span metadata.
 - explicit Codex wrapper adapter installation.
+- Codex wrapper dry-run and managed block uninstall.
 - hook-native install blocked until output replacement is proven.
 
 ## North Star
@@ -131,6 +132,13 @@ Wrapper mode:
 - improve AGENTS.md managed block UX.
 - add `cfw install codex --mode wrapper --dry-run`.
 - add `cfw uninstall codex` for managed block removal.
+
+Current wrapper lifecycle:
+
+- install snippet printing.
+- managed `AGENTS.md` write.
+- dry-run inspection.
+- managed block removal.
 
 Hook-native mode:
 

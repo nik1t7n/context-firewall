@@ -56,6 +56,8 @@ Make wrapper mode first-class:
 - AGENTS.md snippet generator
 - first-run guided command
 - clear advisory-mode labeling
+- dry-run install
+- managed block uninstall
 
 ## Phase 3: Hook-Native Adapter
 
