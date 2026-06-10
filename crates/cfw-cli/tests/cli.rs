@@ -73,6 +73,29 @@ fn doctor_reports_codex_without_claiming_hook_replacement() {
 }
 
 #[test]
+fn first_run_creates_a_real_span() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut first_run = Command::cargo_bin("cfw").expect("cfw binary");
+    first_run
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "first-run-session")
+        .arg("first-run")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("context_firewall_demo"))
+        .stdout(predicate::str::contains("[context-firewall]"));
+
+    let mut receipt = Command::cargo_bin("cfw").expect("cfw binary");
+    receipt
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("receipt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("spans: 1"));
+}
+
+#[test]
 fn install_codex_wrapper_prints_advisory_snippet() {
     let mut install = Command::cargo_bin("cfw").expect("cfw binary");
     install

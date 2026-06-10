@@ -25,6 +25,8 @@ struct Cli {
 enum Commands {
     /// Install an explicit agent adapter.
     Install(InstallArgs),
+    /// Run a guided local command to prove the storage and receipt path works.
+    FirstRun,
     /// Run a real command, store raw output, and print compact output.
     Run(RunArgs),
     /// Compact stdin with a deterministic reducer.
@@ -121,6 +123,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Install(args) => install(args),
+        Commands::FirstRun => first_run(),
         Commands::Run(args) => run_command(args),
         Commands::Compact(args) => compact(args),
         Commands::Show(args) => show(args),
@@ -128,6 +131,19 @@ fn main() -> Result<()> {
         Commands::Top(args) => top(args),
         Commands::Doctor(args) => doctor(args),
     }
+}
+
+fn first_run() -> Result<()> {
+    eprintln!("Context Firewall first run: executing a real local command through cfw run.");
+    run_command(RunArgs {
+        kind: "test-output".to_string(),
+        command: vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "printf 'running 2 tests\\ntest smoke ... ok\\ntest context_firewall_demo ... ok\\ntest result: ok. 2 passed; 0 failed\\n'"
+                .to_string(),
+        ],
+    })
 }
 
 fn install(args: InstallArgs) -> Result<()> {
