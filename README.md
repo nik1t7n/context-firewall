@@ -16,12 +16,39 @@ The first target is Codex. The first honest adapter mode is wrapper mode: agents
 ## First useful loop
 
 ```bash
+cfw first-run
 cfw run -- cargo test
 cfw receipt
 cfw show <span-id> --lines 120:180
+```
+
+## Codex
+
+Wrapper mode is available now:
+
+```bash
+cfw install codex --mode wrapper
+cfw install codex --mode wrapper --write-agents
+cfw doctor codex
+```
+
+Hook-native mode is intentionally blocked until a real output-replacement canary proves that Codex sees compact output instead of raw output.
+
+```bash
+cfw install codex --mode hook-native
+# HookReplacementFailed until the canary passes.
+```
+
+## Development
+
+```bash
+cargo fmt --check
+cargo test
+cargo clippy -- -D warnings
 ```
 
 ## Status
 
 Early implementation. The project intentionally starts with the real local execution path before any hosted service, cloud telemetry, or LLM-based compression.
 
+See [docs/global-plan.md](docs/global-plan.md) for the build plan.
