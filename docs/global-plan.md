@@ -18,6 +18,7 @@ Context Firewall is a standalone Rust workspace with:
 - policy routing for git diffs, tests, search/listing output, logs, JSON, generated reads, denied paths, and binary output.
 - secret-like raw output guard on `cfw show`.
 - structured `argv` in span metadata.
+- proof-based duplicate output detection using command, cwd, exit code, and raw output hash, applied only when the duplicate receipt is smaller than the normal reduced output.
 - explicit Codex wrapper adapter installation.
 - Codex wrapper dry-run and managed block uninstall.
 - hook-native install blocked until output replacement is proven.
@@ -111,17 +112,20 @@ Remaining:
 
 ## Phase 4: Loop Detection
 
-Add repeat detection using:
+Started. Current repeat detection uses:
 
 - command argv.
 - cwd.
+- stdout/stderr hash.
+- exit code.
+
+Remaining repeat key inputs:
+
 - repo HEAD.
 - index state hash.
 - selected env allowlist hash.
 - policy version.
 - input file hashes when known.
-- stdout/stderr hash.
-- exit code.
 
 Never label a situation "unchanged" unless the repeat key proves it.
 

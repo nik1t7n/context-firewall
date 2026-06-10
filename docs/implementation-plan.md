@@ -67,3 +67,14 @@ Only after Phase -1 passes:
 - trust/load/run/replacement verification
 - uninstall rollback
 - delivery evidence paths
+
+## Phase 4: Loop Detection
+
+Started with strict duplicate-output detection:
+
+- same command text
+- same cwd
+- same exit code
+- same raw output hash
+
+Remaining hardening: repo HEAD, index hash, selected env hash, policy version, and input file hashes when known.

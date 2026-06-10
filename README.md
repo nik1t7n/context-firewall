@@ -47,6 +47,7 @@ Policy blocks obvious context waste such as dependency/build path reads and bina
 - `cfw show <span-id> --force` is required when raw output looks credential-like.
 - `cfw purge --older-than-days N` or `cfw purge --all` deletes local span rows and artifact files from the active data dir.
 - span metadata stores structured `argv` alongside command text, cwd, exit code, and split stdout/stderr artifact paths.
+- repeated command output is deduped only when command, cwd, exit code, and raw output hash match a previous span, and the duplicate receipt is smaller than the normal reduced output.
 
 ## Codex
 

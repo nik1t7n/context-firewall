@@ -178,6 +178,68 @@ fn purge_all_removes_span_rows_and_artifacts() {
 }
 
 #[test]
+fn repeated_identical_command_returns_duplicate_handle() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut first = Command::cargo_bin("cfw").expect("cfw binary");
+    first
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "dedupe-session")
+        .args(["run", "--", "seq", "1", "220"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("220"))
+        .stdout(predicate::str::contains("duplicate output").not());
+
+    let mut second = Command::cargo_bin("cfw").expect("cfw binary");
+    second
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "dedupe-session")
+        .args(["run", "--", "seq", "1", "220"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "[context-firewall: duplicate output]",
+        ))
+        .stdout(predicate::str::contains("previous_span: cfw://span/"))
+        .stdout(predicate::str::contains(
+            "same command, cwd, exit code, and raw output hash",
+        ));
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"risk_class\": \"deduped\""));
+}
+
+#[test]
+fn repeated_tiny_output_is_not_deduped_when_receipt_would_be_larger() {
+    let temp = TempDir::new().expect("temp dir");
+
+    for _ in 0..2 {
+        let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+        run.env("CFW_DATA_DIR", temp.path())
+            .env("CFW_SESSION", "tiny-dedupe-session")
+            .args(["run", "--", "printf", "x"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("x"))
+            .stdout(predicate::str::contains("duplicate output").not());
+    }
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"risk_class\": \"deduped\"").not());
+}
+
+#[test]
 fn doctor_reports_codex_without_claiming_hook_replacement() {
     let temp = TempDir::new().expect("temp dir");
 

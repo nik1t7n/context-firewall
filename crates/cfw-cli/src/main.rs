@@ -310,10 +310,9 @@ fn run_command(args: RunArgs) -> Result<()> {
         format!("{stdout}\n[stderr]\n{stderr}")
     };
     let reducer_kind = choose_reducer_kind(&args.kind, decision.reason_code);
-    let reduction = cfw_reducers::reduce(reducer_kind, &raw);
+    let mut reduction = cfw_reducers::reduce(reducer_kind, &raw);
     let span_kind = reducer_kind.to_string();
     let raw_estimate = estimate_tokens(&raw);
-    let returned_estimate = estimate_tokens(&reduction.output);
 
     let store = Store::open(&paths)?;
     let session_id = current_session_id();
@@ -353,6 +352,28 @@ fn run_command(args: RunArgs) -> Result<()> {
         .with_context(|| format!("could not write {}", meta_path.display()))?;
 
     let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
+    let duplicate = store.find_duplicate_span(
+        &command_text,
+        &cwd.display().to_string(),
+        output.status.code(),
+        &hash,
+    )?;
+    let mut deduped = false;
+    if let Some(previous) = duplicate.as_ref() {
+        let duplicate_output = format!(
+            "[context-firewall: duplicate output]\nprevious_span: cfw://span/{}\nproof: same command, cwd, exit code, and raw output hash\nraw output stored for this run; use cfw show {} for the previous copy\n",
+            previous.id, previous.id
+        );
+        if estimate_tokens(&duplicate_output).tokens < estimate_tokens(&reduction.output).tokens {
+            reduction.output = duplicate_output;
+            reduction.omitted = true;
+            reduction
+                .notes
+                .push(format!("deduped against previous span {}", previous.id));
+            deduped = true;
+        }
+    }
+    let returned_estimate = estimate_tokens(&reduction.output);
     let span = SpanRecord {
         id: span_id.clone(),
         session_id,
@@ -370,7 +391,9 @@ fn run_command(args: RunArgs) -> Result<()> {
         policy_action: decision.action.as_str().to_string(),
         delivery_status: DeliveryStatus::AdvisoryWrapper,
         delivery_evidence_path: None,
-        risk_class: if reduction.omitted {
+        risk_class: if deduped {
+            "deduped"
+        } else if reduction.omitted {
             "reduced"
         } else {
             "pass_through"

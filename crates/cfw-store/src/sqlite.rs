@@ -170,6 +170,35 @@ impl Store {
         }))
     }
 
+    pub fn find_duplicate_span(
+        &self,
+        command: &str,
+        cwd: &str,
+        exit_code: Option<i32>,
+        hash: &str,
+    ) -> Result<Option<SpanRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, session_id, kind, source, command, cwd, exit_code,
+                   raw_bytes, raw_estimated_tokens, returned_bytes, returned_estimated_tokens,
+                   hash, reducer, policy_action, delivery_status, delivery_evidence_path,
+                   risk_class, artifact_path, created_at
+            FROM spans
+            WHERE command = ?1
+              AND cwd = ?2
+              AND ((exit_code IS NULL AND ?3 IS NULL) OR exit_code = ?3)
+              AND hash = ?4
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )?;
+        let mut rows = stmt.query(params![command, cwd, exit_code, hash])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        Ok(Some(row_to_span(row)?))
+    }
+
     pub fn recent_spans(&self, limit: i64) -> Result<Vec<SpanRecord>> {
         let mut stmt = self.conn.prepare(
             r#"
