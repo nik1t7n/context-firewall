@@ -92,10 +92,10 @@ Started. Current reducer pack:
 - JSON shape reducer.
 - logs reducer.
 - file outline reducer.
+- browser snapshot reducer.
 
 Remaining:
 
-- browser snapshot reducer.
 - deeper real-output fixture corpus.
 
 Each reducer gets:

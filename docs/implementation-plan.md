@@ -50,10 +50,10 @@ Conservative deterministic reducers shipped so far:
 - logs
 - JSON
 - file outlines
+- browser snapshots
 
 Remaining reducer work:
 
-- browser snapshots
 - larger real-output fixture corpus
 - stricter failure-preservation invariants per ecosystem
 

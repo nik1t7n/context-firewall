@@ -1,3 +1,4 @@
+pub mod browser;
 pub mod generic;
 pub mod git;
 pub mod json;
@@ -23,6 +24,9 @@ pub trait Reducer {
 
 pub fn reduce(kind: &str, input: &str) -> Reduction {
     match kind {
+        "browser" | "browser-snapshot" | "browser_snapshot" | "aria-snapshot" | "aria_snapshot" => {
+            browser::BrowserSnapshotReducer.reduce(input)
+        }
         "git" | "git-output" | "git_output" => git::GitReducer.reduce(input),
         "json" | "json-output" | "json_output" => json::JsonReducer.reduce(input),
         "log" | "log-output" | "log_output" => log::LogReducer.reduce(input),

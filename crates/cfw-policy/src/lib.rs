@@ -43,6 +43,8 @@ pub struct Actions {
     pub large_json: PolicyAction,
     #[serde(default = "default_store_matches_action")]
     pub large_listing: PolicyAction,
+    #[serde(default = "default_compact_action")]
+    pub browser_snapshot: PolicyAction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -112,6 +114,7 @@ impl Default for Actions {
             large_search: PolicyAction::StoreAndReturnMatches,
             large_json: PolicyAction::Outline,
             large_listing: PolicyAction::StoreAndReturnMatches,
+            browser_snapshot: PolicyAction::Compact,
         }
     }
 }
@@ -245,6 +248,16 @@ impl Policy {
             };
         }
 
+        if is_browser_snapshot_command(argv) {
+            return PolicyDecision {
+                action: self.actions.browser_snapshot,
+                reason_code: "browser_snapshot",
+                explanation:
+                    "browser accessibility snapshots are summarized by roles and key nodes"
+                        .to_string(),
+            };
+        }
+
         if is_test_command(argv) {
             return PolicyDecision {
                 action: self.actions.large_test_output,
@@ -347,6 +360,17 @@ fn is_test_command(argv: &[String]) -> bool {
         || joined.contains("jest")
 }
 
+fn is_browser_snapshot_command(argv: &[String]) -> bool {
+    let joined = argv.join(" ").to_ascii_lowercase();
+    joined.contains("aria snapshot")
+        || joined.contains("ariasnapshot")
+        || joined.contains("accessibility snapshot")
+        || joined.contains("accessibility.snapshot")
+        || joined.contains("browser snapshot")
+        || joined.contains("playwright")
+            && (joined.contains("aria") || joined.contains("snapshot") || joined.contains("--ui"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +417,18 @@ mod tests {
         let decision = policy.decide_command(&["cat".to_string(), "Cargo.lock".to_string()]);
         assert_eq!(decision.action, PolicyAction::Outline);
         assert_eq!(decision.reason_code, "generated_file_read");
+    }
+
+    #[test]
+    fn browser_snapshot_commands_use_browser_snapshot_policy() {
+        let policy = Policy::default();
+        let decision = policy.decide_command(&[
+            "node".to_string(),
+            "-e".to_string(),
+            "console.log('playwright aria snapshot')".to_string(),
+        ]);
+        assert_eq!(decision.action, PolicyAction::Compact);
+        assert_eq!(decision.reason_code, "browser_snapshot");
     }
 
     #[test]

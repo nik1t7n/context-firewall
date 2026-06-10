@@ -177,3 +177,34 @@ fn outline_reducer_keeps_lockfile_package_shape() {
     assert!(reduction.output.contains("version = \"2.0.0\""));
     assert!(!reduction.output.contains("checksum"));
 }
+
+#[test]
+fn browser_snapshot_reducer_preserves_key_accessible_nodes() {
+    let mut lines = vec![
+        "url: https://example.test/dashboard".to_string(),
+        "title: Dashboard".to_string(),
+        "- banner:".to_string(),
+        "  - heading \"Dashboard\" [level=1]".to_string(),
+        "  - link \"Settings\"".to_string(),
+        "- main:".to_string(),
+        "  - textbox \"Search projects\"".to_string(),
+        "  - button \"Create project\"".to_string(),
+        "  - alert \"Billing failed\"".to_string(),
+    ];
+    for idx in 1..=160 {
+        lines.push(format!("  - text \"Background table row {idx}\""));
+    }
+    lines.push("  - button \"Retry payment\"".to_string());
+    let input = lines.join("\n");
+
+    let reduction = reduce("browser-snapshot", &input);
+
+    assert_eq!(reduction.reducer, "browser-snapshot");
+    assert!(reduction.omitted);
+    assert!(reduction.output.contains("roles:"));
+    assert!(reduction.output.contains("heading=1"));
+    assert!(reduction.output.contains("key accessible nodes"));
+    assert!(reduction.output.contains("button \"Create project\""));
+    assert!(reduction.output.contains("alert \"Billing failed\""));
+    assert!(reduction.output.contains("omitted"));
+}

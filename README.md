@@ -38,6 +38,7 @@ Context Firewall does not use an LLM to decide what to hide. It classifies the c
 - `log`: preserves log edges plus severity/error context.
 - `json`: returns JSON shape, collection sizes, and small scalar samples.
 - `outline`: returns headings, imports, and top-level declarations for generated/lock files.
+- `browser-snapshot`: summarizes Playwright/ARIA snapshots by roles, diagnostics, and key accessible nodes.
 
 Policy blocks obvious context waste such as dependency/build path reads and binary file output before execution.
 

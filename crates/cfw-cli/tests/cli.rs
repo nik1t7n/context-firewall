@@ -233,11 +233,18 @@ fn purge_all_removes_span_rows_and_artifacts() {
 #[test]
 fn repeated_identical_command_returns_duplicate_handle() {
     let temp = TempDir::new().expect("temp dir");
+    let work = TempDir::new().expect("work dir");
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(work.path())
+        .status()
+        .expect("git init");
 
     let mut first = Command::cargo_bin("cfw").expect("cfw binary");
     first
         .env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "dedupe-session")
+        .current_dir(work.path())
         .args(["run", "--", "seq", "1", "220"])
         .assert()
         .success()
@@ -248,6 +255,7 @@ fn repeated_identical_command_returns_duplicate_handle() {
     second
         .env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "dedupe-session")
+        .current_dir(work.path())
         .args(["run", "--", "seq", "1", "220"])
         .assert()
         .success()
@@ -628,6 +636,59 @@ fn search_output_uses_search_reducer_by_policy() {
         .assert()
         .success()
         .stdout(predicate::str::contains("reason: search_output"));
+}
+
+#[test]
+fn browser_snapshot_output_uses_browser_reducer_by_policy() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let snapshot = work.path().join("aria-snapshot.txt");
+    let mut lines = vec![
+        "url: https://example.test/app".to_string(),
+        "title: Example App".to_string(),
+        "- banner:".to_string(),
+        "  - heading \"Example App\" [level=1]".to_string(),
+        "  - link \"Docs\"".to_string(),
+        "- main:".to_string(),
+        "  - textbox \"Search\"".to_string(),
+        "  - button \"Create\"".to_string(),
+    ];
+    for idx in 1..=180 {
+        lines.push(format!("  - text \"Noise row {idx}\""));
+    }
+    lines.push("  - alert \"Save failed\"".to_string());
+    std::fs::write(&snapshot, lines.join("\n")).expect("snapshot");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args([
+            "run",
+            "--",
+            "node",
+            "-e",
+            "const fs=require('fs'); console.log('playwright aria snapshot'); console.log(fs.readFileSync('aria-snapshot.txt','utf8'))",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "[context-firewall: browser snapshot summary]",
+        ))
+        .stdout(predicate::str::contains("key accessible nodes"))
+        .stdout(predicate::str::contains("button \"Create\""))
+        .stdout(predicate::str::contains("alert \"Save failed\""))
+        .stdout(predicate::str::contains("Noise row 90").not())
+        .stdout(predicate::str::contains(
+            "delivery_status: advisory_wrapper",
+        ));
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", data.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"kind\": \"browser-snapshot\""));
 }
 
 #[test]

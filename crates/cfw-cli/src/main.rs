@@ -816,6 +816,7 @@ fn choose_reducer_kind<'a>(requested: &'a str, reason_code: &str) -> &'a str {
         "json_output" => "json",
         "large_log" => "log",
         "listing_output" => "search",
+        "browser_snapshot" => "browser-snapshot",
         "search_output" => "search",
         "test_output" => "test-output",
         _ => requested,
