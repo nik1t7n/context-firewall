@@ -234,7 +234,9 @@ fn run_command(args: RunArgs) -> Result<()> {
     } else {
         format!("{stdout}\n[stderr]\n{stderr}")
     };
-    let reduction = cfw_reducers::reduce(&args.kind, &raw);
+    let reducer_kind = choose_reducer_kind(&args.kind, decision.reason_code);
+    let reduction = cfw_reducers::reduce(reducer_kind, &raw);
+    let span_kind = reducer_kind.to_string();
     let raw_estimate = estimate_tokens(&raw);
     let returned_estimate = estimate_tokens(&reduction.output);
 
@@ -278,7 +280,7 @@ fn run_command(args: RunArgs) -> Result<()> {
     let span = SpanRecord {
         id: span_id.clone(),
         session_id,
-        kind: args.kind.clone(),
+        kind: span_kind,
         source: "cfw_run".to_string(),
         command: Some(command_text),
         cwd: Some(cwd.display().to_string()),
@@ -488,6 +490,17 @@ fn load_or_default_policy(paths: &StorePaths) -> Result<Policy> {
         Policy::load(&policy_path)
     } else {
         Ok(Policy::default())
+    }
+}
+
+fn choose_reducer_kind<'a>(requested: &'a str, reason_code: &str) -> &'a str {
+    if requested != "generic" {
+        return requested;
+    }
+    match reason_code {
+        "git_diff" => "git",
+        "test_output" => "test-output",
+        _ => requested,
     }
 }
 

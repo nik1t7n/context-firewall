@@ -1,4 +1,5 @@
 pub mod generic;
+pub mod git;
 pub mod test_output;
 
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,7 @@ pub trait Reducer {
 
 pub fn reduce(kind: &str, input: &str) -> Reduction {
     match kind {
+        "git" | "git-output" | "git_output" => git::GitReducer.reduce(input),
         "test-output" | "test_output" => test_output::TestOutputReducer.reduce(input),
         _ => generic::GenericReducer.reduce(input),
     }

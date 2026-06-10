@@ -204,3 +204,39 @@ fn policy_blocks_obvious_dependency_search() {
         .stderr(predicate::str::contains("PolicyBlocked"))
         .stderr(predicate::str::contains("node_modules_search"));
 }
+
+#[test]
+fn git_diff_uses_git_reducer_by_policy() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let old = work.path().join("old.txt");
+    let new = work.path().join("new.txt");
+    std::fs::write(&old, "old\nsame\n").expect("old file");
+    std::fs::write(&new, "new\nsame\n").expect("new file");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", data.path())
+        .args([
+            "run",
+            "--",
+            "git",
+            "diff",
+            "--no-index",
+            old.to_str().expect("utf8 old"),
+            new.to_str().expect("utf8 new"),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("diff --git"))
+        .stdout(predicate::str::contains(
+            "delivery_status: advisory_wrapper",
+        ));
+
+    let mut receipt = Command::cargo_bin("cfw").expect("cfw binary");
+    receipt
+        .env("CFW_DATA_DIR", data.path())
+        .arg("receipt")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(" git "));
+}
