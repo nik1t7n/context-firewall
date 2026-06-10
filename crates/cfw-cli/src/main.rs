@@ -32,7 +32,9 @@ enum Commands {
     /// Show raw artifact output for a span.
     Show(ShowArgs),
     /// Print a local receipt from recent spans.
-    Receipt,
+    Receipt(ReceiptArgs),
+    /// Show the largest recent context burners.
+    Top(TopArgs),
     /// Check local Context Firewall and Codex integration health.
     Doctor(DoctorArgs),
 }
@@ -96,6 +98,20 @@ struct DoctorArgs {
     target: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct ReceiptArgs {
+    /// Emit JSON instead of terminal text.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct TopArgs {
+    /// Number of spans to show.
+    #[arg(long, default_value_t = 10)]
+    limit: i64,
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -108,7 +124,8 @@ fn main() -> Result<()> {
         Commands::Run(args) => run_command(args),
         Commands::Compact(args) => compact(args),
         Commands::Show(args) => show(args),
-        Commands::Receipt => receipt(),
+        Commands::Receipt(args) => receipt(args),
+        Commands::Top(args) => top(args),
         Commands::Doctor(args) => doctor(args),
     }
 }
@@ -265,7 +282,7 @@ fn show(args: ShowArgs) -> Result<()> {
     Ok(())
 }
 
-fn receipt() -> Result<()> {
+fn receipt(args: ReceiptArgs) -> Result<()> {
     let paths = StorePaths::discover()?;
     let store = Store::open(&paths)?;
     let spans = store.recent_spans(50)?;
@@ -285,6 +302,28 @@ fn receipt() -> Result<()> {
         })
         .map(|span| span.raw_estimated_tokens - span.returned_estimated_tokens)
         .sum();
+
+    if args.json {
+        let payload = serde_json::json!({
+            "spans": spans.len(),
+            "raw_estimated_tokens": raw,
+            "returned_estimated_tokens": returned,
+            "net_estimated_saved": verified_saved.max(0),
+            "confidence": "low",
+            "recent_spans": spans.iter().take(10).map(|span| {
+                serde_json::json!({
+                    "id": span.id,
+                    "kind": span.kind,
+                    "raw_estimated_tokens": span.raw_estimated_tokens,
+                    "returned_estimated_tokens": span.returned_estimated_tokens,
+                    "delivery_status": span.delivery_status.as_str(),
+                    "command": span.command,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
 
     println!("Context Firewall Receipt");
     println!();
@@ -307,6 +346,31 @@ fn receipt() -> Result<()> {
             span.returned_estimated_tokens,
             span.delivery_status.as_str()
         );
+    }
+    Ok(())
+}
+
+fn top(args: TopArgs) -> Result<()> {
+    let paths = StorePaths::discover()?;
+    let store = Store::open(&paths)?;
+    let mut spans = store.recent_spans(200)?;
+    spans.sort_by_key(|span| std::cmp::Reverse(span.raw_estimated_tokens));
+
+    println!("Context Firewall Top Burners");
+    println!();
+    for (idx, span) in spans.iter().take(args.limit as usize).enumerate() {
+        println!(
+            "{}. {} {} raw={} returned={} delivery={}",
+            idx + 1,
+            &span.id[..12],
+            span.kind,
+            span.raw_estimated_tokens,
+            span.returned_estimated_tokens,
+            span.delivery_status.as_str()
+        );
+        if let Some(command) = &span.command {
+            println!("   command: {command}");
+        }
     }
     Ok(())
 }

@@ -34,6 +34,23 @@ fn run_receipt_and_show_use_real_artifacts() {
         .stdout(predicate::str::contains("Context Firewall Receipt"))
         .stdout(predicate::str::contains("advisory_wrapper"));
 
+    let mut json_receipt = Command::cargo_bin("cfw").expect("cfw binary");
+    json_receipt
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["receipt", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"net_estimated_saved\""))
+        .stdout(predicate::str::contains("\"advisory_wrapper\""));
+
+    let mut top = Command::cargo_bin("cfw").expect("cfw binary");
+    top.env("CFW_DATA_DIR", temp.path())
+        .arg("top")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Top Burners"))
+        .stdout(predicate::str::contains("printf"));
+
     let mut show = Command::cargo_bin("cfw").expect("cfw binary");
     show.env("CFW_DATA_DIR", temp.path())
         .args(["show", &span_id, "--lines", "1:1"])
