@@ -325,7 +325,8 @@ fn run_command(args: RunArgs) -> Result<()> {
 
     let paths = StorePaths::discover()?;
     let policy = load_or_default_policy(&paths)?;
-    let decision = policy.decide_command(&args.command);
+    let cwd = std::env::current_dir().context("CfwExecutionError: could not read cwd")?;
+    let decision = policy.decide_command(&args.command, &cwd);
     if decision.action == PolicyAction::Block {
         bail!(
             "PolicyBlocked: {} ({})",
@@ -334,7 +335,6 @@ fn run_command(args: RunArgs) -> Result<()> {
         );
     }
 
-    let cwd = std::env::current_dir().context("CfwExecutionError: could not read cwd")?;
     let output = Command::new(program)
         .args(rest)
         .stdout(Stdio::piped())
@@ -631,7 +631,8 @@ fn policy(args: PolicyArgs) -> Result<()> {
         }
         PolicyCommand::Explain { command } => {
             let policy = load_or_default_policy(&paths)?;
-            let decision = policy.decide_command(&command);
+            let cwd = std::env::current_dir().context("could not read cwd")?;
+            let decision = policy.decide_command(&command, &cwd);
             println!("action: {}", decision.action.as_str());
             println!("reason: {}", decision.reason_code);
             println!("explanation: {}", decision.explanation);

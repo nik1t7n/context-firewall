@@ -564,6 +564,44 @@ fn policy_blocks_obvious_dependency_search() {
 }
 
 #[test]
+#[cfg(unix)]
+fn policy_blocks_symlink_to_denied_path() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let package_dir = work.path().join("node_modules/pkg");
+    std::fs::create_dir_all(&package_dir).expect("package dir");
+    std::fs::write(package_dir.join("index.js"), "console.log('burn');\n").expect("package file");
+    std::os::unix::fs::symlink(&package_dir, work.path().join("vendor")).expect("symlink");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "cat", "vendor/index.js"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("PolicyBlocked"))
+        .stderr(predicate::str::contains("denied_path"));
+}
+
+#[test]
+fn policy_blocks_case_variant_denied_path() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let package_dir = work.path().join("Node_Modules/pkg");
+    std::fs::create_dir_all(&package_dir).expect("package dir");
+    std::fs::write(package_dir.join("index.js"), "console.log('burn');\n").expect("package file");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.env("CFW_DATA_DIR", data.path())
+        .current_dir(work.path())
+        .args(["run", "--", "cat", "Node_Modules/pkg/index.js"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("PolicyBlocked"))
+        .stderr(predicate::str::contains("denied_path"));
+}
+
+#[test]
 fn git_diff_uses_git_reducer_by_policy() {
     let data = TempDir::new().expect("data dir");
     let work = TempDir::new().expect("work dir");

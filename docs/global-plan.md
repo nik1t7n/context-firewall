@@ -113,14 +113,15 @@ Started. Current policy supports:
 - `cfw policy check`.
 - `cfw policy explain`.
 - path deny rules.
+- cwd-aware canonical path checks for existing path arguments.
+- symlink targets resolved before deny checks.
+- case-insensitive path component matching.
 - generated-file rules.
 - binary-output block.
 
 Remaining:
 
 - noninteractive `ask` failure.
-- symlink escape tests.
-- macOS case-insensitive path tests.
 
 ## Phase 4: Loop Detection
 

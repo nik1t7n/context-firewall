@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -180,7 +180,7 @@ impl Policy {
         Ok(true)
     }
 
-    pub fn decide_command(&self, argv: &[String]) -> PolicyDecision {
+    pub fn decide_command(&self, argv: &[String], cwd: &Path) -> PolicyDecision {
         if argv.is_empty() {
             return PolicyDecision {
                 action: PolicyAction::Block,
@@ -205,7 +205,10 @@ impl Policy {
                 | "tail"
                 | "less"
                 | "head"
-        ) && argv.iter().skip(1).any(|arg| is_denied_path(arg))
+        ) && argv
+            .iter()
+            .skip(1)
+            .any(|arg| is_denied_path_arg(arg, cwd, &self.paths.deny))
         {
             return PolicyDecision {
                 action: self.actions.node_modules_search,
@@ -312,18 +315,39 @@ impl Policy {
     }
 }
 
-fn is_denied_path(value: &str) -> bool {
-    let normalized = value.replace('\\', "/");
-    path_has_component(&normalized, "node_modules")
-        || path_has_component(&normalized, ".git")
-        || (normalized.contains('/')
-            && (path_has_component(&normalized, "target")
-                || path_has_component(&normalized, "dist")
-                || path_has_component(&normalized, "build")))
+fn is_denied_path(value: &str, deny_patterns: &[String]) -> bool {
+    let normalized = value.replace('\\', "/").to_ascii_lowercase();
+    deny_patterns.iter().any(|pattern| {
+        let pattern = pattern.replace('\\', "/").to_ascii_lowercase();
+        if let Some(component) = pattern.strip_suffix("/**") {
+            path_has_component(&normalized, component)
+        } else {
+            normalized == pattern || normalized.ends_with(&format!("/{pattern}"))
+        }
+    })
 }
 
 fn path_has_component(path: &str, component: &str) -> bool {
     path.split('/').any(|part| part == component)
+}
+
+fn is_denied_path_arg(value: &str, cwd: &Path, deny_patterns: &[String]) -> bool {
+    if is_denied_path(value, deny_patterns) {
+        return true;
+    }
+    if value.starts_with('-') {
+        return false;
+    }
+    let path = PathBuf::from(value);
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    };
+    let Ok(canonical) = std::fs::canonicalize(&candidate) else {
+        return false;
+    };
+    is_denied_path(&canonical.display().to_string(), deny_patterns)
 }
 
 fn looks_generated_path(value: &str) -> bool {
@@ -386,7 +410,8 @@ mod tests {
     #[test]
     fn git_diff_compacts() {
         let policy = Policy::default();
-        let decision = policy.decide_command(&["git".to_string(), "diff".to_string()]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision = policy.decide_command(&["git".to_string(), "diff".to_string()], &cwd);
         assert_eq!(decision.action, PolicyAction::Compact);
         assert_eq!(decision.reason_code, "git_diff");
     }
@@ -394,11 +419,15 @@ mod tests {
     #[test]
     fn node_modules_search_blocks() {
         let policy = Policy::default();
-        let decision = policy.decide_command(&[
-            "rg".to_string(),
-            "needle".to_string(),
-            "node_modules".to_string(),
-        ]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision = policy.decide_command(
+            &[
+                "rg".to_string(),
+                "needle".to_string(),
+                "node_modules".to_string(),
+            ],
+            &cwd,
+        );
         assert_eq!(decision.action, PolicyAction::Block);
         assert_eq!(decision.reason_code, "denied_path");
     }
@@ -406,7 +435,8 @@ mod tests {
     #[test]
     fn search_commands_use_search_reducer_policy() {
         let policy = Policy::default();
-        let decision = policy.decide_command(&["rg".to_string(), "needle".to_string()]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision = policy.decide_command(&["rg".to_string(), "needle".to_string()], &cwd);
         assert_eq!(decision.action, PolicyAction::StoreAndReturnMatches);
         assert_eq!(decision.reason_code, "search_output");
     }
@@ -414,7 +444,8 @@ mod tests {
     #[test]
     fn generated_reads_use_outline_policy() {
         let policy = Policy::default();
-        let decision = policy.decide_command(&["cat".to_string(), "Cargo.lock".to_string()]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision = policy.decide_command(&["cat".to_string(), "Cargo.lock".to_string()], &cwd);
         assert_eq!(decision.action, PolicyAction::Outline);
         assert_eq!(decision.reason_code, "generated_file_read");
     }
@@ -422,11 +453,15 @@ mod tests {
     #[test]
     fn browser_snapshot_commands_use_browser_snapshot_policy() {
         let policy = Policy::default();
-        let decision = policy.decide_command(&[
-            "node".to_string(),
-            "-e".to_string(),
-            "console.log('playwright aria snapshot')".to_string(),
-        ]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision = policy.decide_command(
+            &[
+                "node".to_string(),
+                "-e".to_string(),
+                "console.log('playwright aria snapshot')".to_string(),
+            ],
+            &cwd,
+        );
         assert_eq!(decision.action, PolicyAction::Compact);
         assert_eq!(decision.reason_code, "browser_snapshot");
     }
@@ -434,7 +469,8 @@ mod tests {
     #[test]
     fn binary_reads_are_blocked() {
         let policy = Policy::default();
-        let decision = policy.decide_command(&["cat".to_string(), "image.png".to_string()]);
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision = policy.decide_command(&["cat".to_string(), "image.png".to_string()], &cwd);
         assert_eq!(decision.action, PolicyAction::Block);
         assert_eq!(decision.reason_code, "binary_file");
     }
