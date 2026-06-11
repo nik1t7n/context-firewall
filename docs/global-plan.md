@@ -50,21 +50,23 @@ Tasks:
 - Build a minimal managed Codex hook prototype. Done.
 - Emit a large unique marker from a real Codex shell command. Done.
 - Store raw output as evidence. Done.
-- Return compact replacement output through `PostToolUse` hook feedback. Done.
-- Verify model-visible compact delivery before enabling hook-native install. Done.
-- Record delivery status as `replaced_tool_result` only when proven. Done.
+- Attempt compact replacement output through `PostToolUse` hook feedback. Done.
+- Verify model-visible compact delivery before enabling hook-native install. Blocked by current Codex behavior.
+- Record delivery status as `replaced_tool_result` only when proven. Guarded.
 - Keep wrapper mode as the supported Codex path while hook-native graduates through the canary. Done.
 
 Current gate:
 
 - Codex version: `codex-cli 0.139.0`.
 - Evidence command: `cfw canary codex-hook-replacement`.
-- The adapter graduates when the canary verifies compact model-visible delivery.
+- Current evidence: `codex exec` and app-server / Desktop-style real turns discover hook configuration in the catalog, but do not invoke `PreToolUse` or `PostToolUse` for the tested model-generated shell commands.
+- The adapter graduates only when the canary verifies compact model-visible delivery.
 
 Decision:
 
 - When the canary verifies replacement delivery, hook-native becomes an installable adapter.
 - Until then, wrapper mode remains the supported Codex integration.
+- See `docs/codex-hook-native-roadmap.md` for the June 11, 2026 probe matrix and future probe plan.
 
 ## Phase 1: Local Execution Spine
 
