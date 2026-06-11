@@ -22,5 +22,5 @@ github-attestations = true
 github-attestations-phase = "host"
 # Publish the Homebrew formula to the tap after a successful release
 publish-jobs = ["homebrew"]
-tap = "context-firewall/homebrew-tap"
+tap = "Nomads-AI-Lab/homebrew-tap"
 formula = "cfw"
