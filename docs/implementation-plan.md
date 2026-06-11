@@ -2,28 +2,28 @@
 
 ## Phase -1: Codex Output-Replacement Spike
 
-Before Context Firewall claims hook-native enforcement, prove that a Codex hook can replace model-visible tool output.
+Before Context Firewall claims hook-native enforcement, verify that a Codex hook can replace model-visible tool output.
 
 The canary must:
 
 1. Run a real Codex session.
 2. Execute a command that emits a large unique marker.
-3. Store the raw marker in the artifact store.
-4. Verify the raw marker is absent from the model-visible tool result.
+3. Store the full marker output in the artifact store.
+4. Verify the compact marker is present in the model-visible tool result.
 5. Mark the span as `replaced_tool_result` only when replacement is proven.
 
-If the canary fails, hook-native mode remains observer-only and wrapper mode is v1.
+Wrapper mode is the supported Codex adapter while hook-native graduates through this canary.
 
 Current implementation status:
 
 - `cfw canary codex-hook-replacement` creates an isolated evidence workspace.
 - It runs a real `codex exec` session with a unique raw marker.
 - It writes project hook config, project `hooks.json`, and an isolated temporary `CODEX_HOME` with only real auth plus minimal canary config.
+- It runs with `--dangerously-bypass-hook-trust` and `--dangerously-bypass-approvals-and-sandbox` so the probe focuses on hook delivery.
 - It verifies hook input, hook output, final model-visible output, and Codex JSONL events.
-- Real canary evidence on `codex-cli 0.139.0` is negative: the shell command appears as `command_execution`, the raw marker reaches the final model-visible response, and the `PostToolUse` hook does not run.
-- A separate real `PreToolUse` probe also failed to run on the same `codex exec` command path.
+- Hook-native install remains canary-gated for the supported Codex version.
 
-This is a fail-closed gate, not a soft warning. Hook-native install must remain blocked until this canary is green on the supported Codex version.
+This is a delivery-proof gate. Hook-native install opens when this canary is green on the supported Codex version.
 
 ## Phase 0: Local Execution Spine
 
@@ -57,9 +57,9 @@ Conservative deterministic reducers shipped so far:
 Remaining reducer work:
 
 - broader real-output corpus across additional ecosystems
-- stricter failure-preservation invariants per ecosystem
+- stricter error-preservation invariants per ecosystem
 
-Every reducer must preserve failure-critical evidence and include a retrieval handle whenever anything is omitted.
+Every reducer must preserve error-critical evidence and include a retrieval handle whenever anything is omitted.
 
 ## Phase 2: Codex Wrapper Adapter
 

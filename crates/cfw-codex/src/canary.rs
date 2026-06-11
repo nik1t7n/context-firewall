@@ -113,6 +113,7 @@ pub fn run_output_replacement_canary(options: CanaryOptions) -> Result<CanaryRes
         .arg("--enable")
         .arg("hooks")
         .arg("--dangerously-bypass-hook-trust")
+        .arg("--dangerously-bypass-approvals-and-sandbox")
         .arg("--sandbox")
         .arg("danger-full-access")
         .arg("--skip-git-repo-check")

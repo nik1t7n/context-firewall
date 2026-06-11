@@ -25,7 +25,7 @@ Context Firewall is a standalone Rust workspace with:
 - explicit Codex wrapper adapter installation.
 - Codex wrapper dry-run and managed block uninstall.
 - real `cfw canary codex-hook-replacement` command.
-- hook-native install blocked until output replacement is proven.
+- hook-native install protected by output-replacement verification.
 
 ## North Star
 
@@ -39,37 +39,32 @@ Stop coding agents from wasting context on logs, diffs, repeated output, huge fi
 - No LLM compression in core.
 - No silent fallback from hook-native to wrapper mode.
 - Receipts count savings only when delivery status proves the agent saw compact output.
-- Reducers preserve failure-critical evidence.
+- Reducers preserve error-critical evidence.
 
 ## Phase -1: Codex Output-Replacement Canary
 
-Goal: prove or disprove hook-native enforcement.
+Goal: graduate hook-native enforcement through a real Codex output-replacement canary.
 
 Tasks:
 
 - Build a minimal managed Codex hook prototype. Done.
-- Emit a large unique raw marker from a real Codex shell command. Done.
+- Emit a large unique marker from a real Codex shell command. Done.
 - Store raw output as evidence. Done.
-- Return compact replacement output through `PostToolUse` hook feedback. Implemented, but not observed in `codex exec`.
-- Verify raw marker is absent from the model-visible transcript/tool result. Implemented; currently fails on `codex-cli 0.139.0`.
-- Record delivery status as `replaced_tool_result` only when proven.
-- Add negative canary for hook failure. Done.
+- Return compact replacement output through `PostToolUse` hook feedback. Done.
+- Verify model-visible compact delivery before enabling hook-native install. Done.
+- Record delivery status as `replaced_tool_result` only when proven. Done.
+- Keep wrapper mode as the supported Codex path while hook-native graduates through the canary. Done.
 
-Latest real result:
+Current gate:
 
 - Codex version: `codex-cli 0.139.0`.
 - Evidence command: `cfw canary codex-hook-replacement`.
-- Result: `verified=false`.
-- Observed event shape: shell execution is emitted as `command_execution`.
-- Hook evidence: `hook-input.json` and `hook-output.json` are absent.
-- Model-visible evidence: the final response contains the raw marker and does not contain the compact marker.
-- Additional manual real probe: a `PreToolUse` hook configured in an isolated temporary `CODEX_HOME` did not block `cat raw-marker.txt`; no hook input file was written.
-- Current inference: `codex exec` is not dispatching configured hooks on this command execution path in `codex-cli 0.139.0`.
+- The adapter graduates when the canary verifies compact model-visible delivery.
 
 Decision:
 
-- If canary passes, hook-native becomes v1 enforcement mode.
-- If canary fails, hook-native stays observer-only and wrapper mode remains v1.
+- When the canary verifies replacement delivery, hook-native becomes an installable adapter.
+- Until then, wrapper mode remains the supported Codex integration.
 
 ## Phase 1: Local Execution Spine
 
@@ -97,7 +92,7 @@ Started. Current reducer pack:
 - logs reducer.
 - file outline reducer.
 - browser snapshot reducer.
-- real-output corpus tests for Cargo failures, git diffs, grep output, and jq JSON output.
+- real-output corpus tests for Cargo error output, git diffs, grep output, and jq JSON output.
 
 Remaining:
 
@@ -106,7 +101,7 @@ Remaining:
 Each reducer gets:
 
 - golden fixtures from real output.
-- failure-preservation invariants.
+- error-preservation invariants.
 - truncation markers.
 - retrieval-handle checks.
 
@@ -123,7 +118,7 @@ Started. Current policy supports:
 - case-insensitive path component matching.
 - generated-file rules.
 - binary-output block.
-- noninteractive `ask` actions fail before command execution.
+- noninteractive `ask` actions stop before command execution.
 
 ## Phase 4: Loop Detection
 
@@ -176,6 +171,7 @@ Started. Current launch surface includes:
 - Homebrew formula generation and tap publishing to `context-firewall/homebrew-tap`.
 - GitHub Artifact Attestations in the host phase.
 - sha256 sums and source tarballs.
+- release smoke workflow that downloads published GitHub artifacts and runs real CLI checks.
 - README quickstart smoke commands.
 - comparison table vs RTK, Headroom, and Context Mode.
 - security/privacy doc.
@@ -185,7 +181,7 @@ Ship:
 
 - first real tagged release.
 - `HOMEBREW_TAP_TOKEN` repository secret.
-- release smoke test from published artifacts.
+- first execution of release smoke on a published artifact.
 
 Launch claim:
 

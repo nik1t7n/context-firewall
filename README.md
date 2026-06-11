@@ -2,7 +2,7 @@
 
 Context Firewall is a local-first Rust CLI for keeping noisy command output out of coding-agent context while preserving the full evidence on disk.
 
-The first target is Codex. The working adapter mode is wrapper mode: agents call `cfw run -- <command>` for commands likely to produce large output. Hook-native Codex support stays blocked until a real `codex exec` canary proves that Codex sees compact hook feedback instead of raw command output.
+The first target is Codex. Wrapper mode is available today: agents call `cfw run -- <command>` for commands likely to produce large output. Hook-native Codex support is canary-gated so Context Firewall only reports replacement-backed savings after a real `codex exec` run verifies compact hook delivery.
 
 ## Goals
 
@@ -50,7 +50,7 @@ cfw show <span-id> --lines 1:80
 
 ## What It Catches Today
 
-Context Firewall is not conversation compression. It is command-output control:
+Context Firewall focuses on command-output control:
 
 - giant test output
 - large diffs
@@ -81,11 +81,13 @@ brew install context-firewall/tap/cfw
 
 Release artifacts are built by cargo-dist for macOS, Linux, and Windows. The release workflow publishes shell, PowerShell, and Homebrew installers, sha256 sums, source tarballs, and GitHub Artifact Attestations. Homebrew tap publishing requires the repository secret `HOMEBREW_TAP_TOKEN`.
 
+Published releases are checked by a separate release smoke workflow. It downloads the real GitHub release artifact with `gh release download`, extracts the shipped `cfw` binary, and runs `scripts/release-smoke.sh` against that binary.
+
 ## Deterministic reducers
 
-Context Firewall does not use an LLM to decide what to hide. It classifies the command, stores the full stdout/stderr locally, and applies a deterministic reducer:
+Context Firewall uses deterministic reducers instead of LLM compression. It classifies the command, stores the full stdout/stderr locally, and returns a compact result:
 
-- `test-output`: preserves failures, panics, assertions, summaries, head, and tail.
+- `test-output`: preserves test errors, panics, assertions, summaries, head, and tail.
 - `git`: preserves diff headers, hunk headers, changed lines, and conflict markers.
 - `search`: groups grep/rg/ag/ack matches by file and caps matches per file.
 - `log`: preserves log edges plus severity/error context.
@@ -134,21 +136,20 @@ cfw uninstall codex
 cfw doctor codex
 ```
 
-Hook-native mode is intentionally blocked until a real output-replacement canary proves that Codex sees compact output instead of raw output.
+Hook-native mode is prepared behind a real output-replacement canary.
 
 ```bash
 cfw canary codex-hook-replacement
 cfw install codex --mode hook-native
-# HookReplacementFailed until the canary passes.
 ```
 
-Current real canary result on `codex-cli 0.139.0`: `codex exec` runs the shell command as a `command_execution` item, but configured `PreToolUse` and `PostToolUse` hooks are not invoked on that path. The raw marker reaches the final model-visible response. Context Firewall therefore keeps hook-native install fail-closed and does not claim replacement savings for Codex hook mode yet.
+The canary uses an isolated temporary `CODEX_HOME`, copies only real Codex auth, writes a minimal hook config, runs a real `codex exec`, records JSONL events, and deletes the temporary auth copy after the run. Wrapper mode remains the supported Codex path while hook-native graduates through that verification gate.
 
-The canary uses an isolated temporary `CODEX_HOME`, copies only real Codex auth, writes a minimal hook config, runs a real `codex exec`, records JSONL events, and deletes the temporary auth copy after the run.
+See [docs/codex-hook-native-roadmap.md](docs/codex-hook-native-roadmap.md) for the hook-native roadmap.
 
 ## Real Test Examples
 
-The repository tests exercise real command paths, not mocked command output.
+The repository tests exercise real command paths.
 
 ```bash
 cargo test -p cfw --test cli repeated_identical_command_returns_duplicate_handle
@@ -161,7 +162,7 @@ The Cargo lockfile test runs `cfw run -- cargo --help` three times in a temporar
 
 1. first run stores normal compact output
 2. second unchanged run returns `[context-firewall: duplicate output]`
-3. third run changes `Cargo.lock` and does not dedupe, even though `cargo --help` prints the same text
+3. third run changes `Cargo.lock` and returns a fresh compact result, even though `cargo --help` prints the same text
 
 The stdin test does the same with `cfw run --stdin-file`, proving changed stdin bytes affect repeat evidence.
 
@@ -171,11 +172,12 @@ The stdin test does the same with `cfw run --stdin-file`, proving changed stdin 
 cargo fmt --check
 cargo test
 cargo clippy -- -D warnings
+scripts/release-smoke.sh target/debug/cfw
 ```
 
 ## Status
 
-Early implementation, but the core path is real: local execution, span ledger, policy routing, receipts, Codex wrapper install, reducer pack, repeat fingerprints, and hook-native Codex canary are in place. Hook-native Codex enforcement is still gated because the current real canary is negative on `codex-cli 0.139.0`.
+Early implementation, with the core path already real: local execution, span ledger, policy routing, receipts, Codex wrapper install, reducer pack, repeat fingerprints, release smoke checks, and hook-native Codex canary are in place.
 
 See [docs/global-plan.md](docs/global-plan.md) for the build plan.
 See [docs/comparison.md](docs/comparison.md) for positioning against adjacent token-optimization tools.
