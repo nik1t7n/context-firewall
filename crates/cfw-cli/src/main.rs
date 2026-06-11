@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -806,6 +808,7 @@ fn repeat_fingerprint(
             "config_hash": policy_config_hash(paths)?,
         },
         "input_files": input_file_hashes(argv, cwd)?,
+        "dependencies": dependency_fingerprints(argv, cwd)?,
         "stdin": stdin_evidence.map(stdin_evidence_json),
     }))
 }
@@ -904,6 +907,231 @@ fn input_file_hashes(argv: &[String], cwd: &Path) -> Result<Vec<serde_json::Valu
         }));
     }
     Ok(files)
+}
+
+fn dependency_fingerprints(argv: &[String], cwd: &Path) -> Result<Vec<serde_json::Value>> {
+    let families = command_dependency_families(argv);
+    if families.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut fingerprints = Vec::new();
+    for family in families {
+        let roots = dependency_roots_for_family(&family, argv, cwd);
+        let files = dependency_files_for_family(&family, &roots)?;
+        if files.is_empty() {
+            continue;
+        }
+        fingerprints.push(serde_json::json!({
+            "family": family.as_str(),
+            "roots": roots.iter().map(|root| root.display().to_string()).collect::<Vec<_>>(),
+            "files": files,
+        }));
+    }
+    Ok(fingerprints)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DependencyFamily {
+    Cargo,
+    Node,
+    Python,
+}
+
+impl DependencyFamily {
+    fn as_str(self) -> &'static str {
+        match self {
+            DependencyFamily::Cargo => "cargo",
+            DependencyFamily::Node => "node",
+            DependencyFamily::Python => "python",
+        }
+    }
+}
+
+fn command_dependency_families(argv: &[String]) -> BTreeSet<DependencyFamily> {
+    let mut families = BTreeSet::new();
+    let Some(command) = argv.first().map(|value| command_basename(value)) else {
+        return families;
+    };
+
+    match command.as_str() {
+        "cargo" | "cargo-nextest" | "nextest" => {
+            families.insert(DependencyFamily::Cargo);
+        }
+        "npm" | "npx" | "pnpm" | "yarn" | "bun" | "node" | "jest" | "vitest" | "playwright"
+        | "turbo" | "nx" => {
+            families.insert(DependencyFamily::Node);
+        }
+        "pytest" | "py.test" | "ruff" | "mypy" | "tox" => {
+            families.insert(DependencyFamily::Python);
+        }
+        "python" | "python3" | "uv" | "poetry" => {
+            if command_invokes_pytest(argv) {
+                families.insert(DependencyFamily::Python);
+            }
+        }
+        _ => {}
+    }
+
+    families
+}
+
+fn command_invokes_pytest(argv: &[String]) -> bool {
+    let Some(command) = argv.first().map(|value| command_basename(value)) else {
+        return false;
+    };
+    match command.as_str() {
+        "python" | "python3" => argv
+            .windows(2)
+            .any(|window| window[0] == "-m" && matches!(window[1].as_str(), "pytest" | "py.test")),
+        "uv" | "poetry" => argv
+            .iter()
+            .skip(1)
+            .map(|value| command_basename(value))
+            .any(|value| matches!(value.as_str(), "pytest" | "py.test")),
+        _ => false,
+    }
+}
+
+fn command_basename(value: &str) -> String {
+    Path::new(value)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(value)
+        .to_ascii_lowercase()
+}
+
+fn dependency_roots_for_family(
+    family: &DependencyFamily,
+    argv: &[String],
+    cwd: &Path,
+) -> Vec<PathBuf> {
+    let mut roots = BTreeSet::new();
+    if matches!(family, DependencyFamily::Cargo)
+        && let Some(manifest_parent) = cargo_manifest_parent(argv, cwd)
+    {
+        roots.insert(manifest_parent);
+    }
+    roots.insert(cwd.to_path_buf());
+    roots.into_iter().collect()
+}
+
+fn cargo_manifest_parent(argv: &[String], cwd: &Path) -> Option<PathBuf> {
+    let mut iter = argv.iter().skip(1).peekable();
+    while let Some(arg) = iter.next() {
+        let path = if arg == "--manifest-path" {
+            iter.next().map(String::as_str)
+        } else {
+            arg.strip_prefix("--manifest-path=")
+        };
+        if let Some(path) = path {
+            let candidate = cwd.join(path);
+            return candidate.parent().map(Path::to_path_buf);
+        }
+    }
+    None
+}
+
+fn dependency_files_for_family(
+    family: &DependencyFamily,
+    roots: &[PathBuf],
+) -> Result<Vec<serde_json::Value>> {
+    let names = match family {
+        DependencyFamily::Cargo => &[
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            ".cargo/config.toml",
+            ".cargo/config",
+        ][..],
+        DependencyFamily::Node => &[
+            "package.json",
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+            "yarn.lock",
+            "bun.lock",
+            "bun.lockb",
+            "turbo.json",
+            "nx.json",
+        ][..],
+        DependencyFamily::Python => &[
+            "pyproject.toml",
+            "pytest.toml",
+            "pytest.ini",
+            "tox.ini",
+            "setup.cfg",
+            "setup.py",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "requirements-test.txt",
+            "uv.lock",
+            "poetry.lock",
+            "Pipfile.lock",
+        ][..],
+    };
+
+    let mut seen = BTreeSet::new();
+    let mut files = Vec::new();
+    for root in roots {
+        for candidate in upward_named_files(root, names) {
+            let canonical = candidate
+                .canonicalize()
+                .with_context(|| format!("could not canonicalize {}", candidate.display()))?;
+            if !seen.insert(canonical.clone()) {
+                continue;
+            }
+            let bytes = std::fs::read(&canonical)
+                .with_context(|| format!("could not read {}", canonical.display()))?;
+            files.push(serde_json::json!({
+                "path": canonical.display().to_string(),
+                "role": dependency_file_role(&canonical),
+                "bytes": bytes.len(),
+                "hash": blake3::hash(&bytes).to_hex().to_string(),
+            }));
+        }
+    }
+    files.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["path"].as_str().unwrap_or_default())
+    });
+    Ok(files)
+}
+
+fn upward_named_files(start: &Path, names: &[&str]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        for name in names {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                files.push(candidate);
+            }
+        }
+        current = dir.parent();
+    }
+    files
+}
+
+fn dependency_file_role(path: &Path) -> &'static str {
+    match path.file_name().and_then(OsStr::to_str).unwrap_or_default() {
+        "Cargo.lock"
+        | "package-lock.json"
+        | "npm-shrinkwrap.json"
+        | "pnpm-lock.yaml"
+        | "yarn.lock"
+        | "bun.lock"
+        | "bun.lockb"
+        | "uv.lock"
+        | "poetry.lock"
+        | "Pipfile.lock" => "lockfile",
+        "Cargo.toml" | "package.json" | "pyproject.toml" | "setup.py" => "manifest",
+        _ => "config",
+    }
 }
 
 fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {

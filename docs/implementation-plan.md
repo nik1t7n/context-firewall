@@ -18,9 +18,10 @@ Current implementation status:
 
 - `cfw canary codex-hook-replacement` creates an isolated evidence workspace.
 - It runs a real `codex exec` session with a unique raw marker.
-- It writes project hook config, project `hooks.json`, a temporary Codex profile config, and CLI config overrides.
+- It writes project hook config, project `hooks.json`, and an isolated temporary `CODEX_HOME` with only real auth plus minimal canary config.
 - It verifies hook input, hook output, final model-visible output, and Codex JSONL events.
 - Real canary evidence on `codex-cli 0.139.0` is negative: the shell command appears as `command_execution`, the raw marker reaches the final model-visible response, and the `PostToolUse` hook does not run.
+- A separate real `PreToolUse` probe also failed to run on the same `codex exec` command path.
 
 This is a fail-closed gate, not a soft warning. Hook-native install must remain blocked until this canary is green on the supported Codex version.
 
@@ -94,7 +95,4 @@ Current duplicate-output detection uses:
 - policy engine version and policy config hash
 - direct argv input file hashes when those files are known
 - explicit `--stdin-file` content hash
-
-Remaining hardening:
-
-- command-specific dependency fingerprints for package managers and test runners
+- command-specific dependency fingerprints for Cargo, Node package managers, and Python/pytest-style commands

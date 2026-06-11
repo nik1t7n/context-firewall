@@ -45,6 +45,8 @@ pub fn run_output_replacement_canary(options: CanaryOptions) -> Result<CanaryRes
     let raw_path = workspace.join("raw-marker.txt");
     let schema_path = workspace.join("schema.json");
     let hook_path = workspace.join(".codex/hooks/post_tool_use_canary.py");
+    let isolated_codex_home =
+        std::env::temp_dir().join(format!("context-firewall-codex-home-{canary_id}"));
 
     fs::write(&raw_path, format!("{raw_marker}\n"))
         .with_context(|| format!("could not write {}", raw_path.display()))?;
@@ -66,10 +68,19 @@ pub fn run_output_replacement_canary(options: CanaryOptions) -> Result<CanaryRes
     fs::write(workspace.join(".codex/hooks.json"), hook_json(&hook_path))
         .with_context(|| "could not write project Codex hooks.json")?;
 
-    let profile_name = format!("cfw-{}", canary_id.replace('-', "_"));
-    let profile_path = codex_home()?.join(format!("{profile_name}.config.toml"));
-    fs::write(&profile_path, &project_hook_config)
-        .with_context(|| format!("could not write {}", profile_path.display()))?;
+    fs::create_dir_all(&isolated_codex_home)
+        .with_context(|| format!("could not create {}", isolated_codex_home.display()))?;
+    copy_codex_auth(&codex_home()?, &isolated_codex_home)?;
+    fs::write(
+        isolated_codex_home.join("config.toml"),
+        isolated_user_config(&workspace, &hook_path),
+    )
+    .with_context(|| {
+        format!(
+            "could not write {}",
+            isolated_codex_home.join("config.toml").display()
+        )
+    })?;
 
     let _ = Command::new("git")
         .arg("init")
@@ -94,19 +105,17 @@ pub fn run_output_replacement_canary(options: CanaryOptions) -> Result<CanaryRes
     let mut command = Command::new(&options.codex_bin);
     command
         .current_dir(&workspace)
+        .env("CODEX_HOME", &isolated_codex_home)
         .stdin(Stdio::null())
         .arg("exec")
         .arg("--json")
         .arg("--ephemeral")
-        .arg("--ignore-user-config")
         .arg("--enable")
         .arg("hooks")
         .arg("--dangerously-bypass-hook-trust")
         .arg("--sandbox")
         .arg("danger-full-access")
         .arg("--skip-git-repo-check")
-        .arg("--profile")
-        .arg(&profile_name)
         .arg("-C")
         .arg(&workspace)
         .arg("-o")
@@ -116,8 +125,6 @@ pub fn run_output_replacement_canary(options: CanaryOptions) -> Result<CanaryRes
         .arg("-c")
         .arg("features.hooks=true")
         .arg("-c")
-        .arg(cli_hook_override(&hook_path))
-        .arg("-c")
         .arg("model_reasoning_effort=\"low\"");
     if let Some(model) = options.model {
         command.arg("--model").arg(model);
@@ -125,7 +132,7 @@ pub fn run_output_replacement_canary(options: CanaryOptions) -> Result<CanaryRes
     command.arg(prompt);
 
     let output_result = command.output();
-    let _ = fs::remove_file(&profile_path);
+    let _ = fs::remove_dir_all(&isolated_codex_home);
     let output = output_result.with_context(|| format!("could not run {}", options.codex_bin))?;
     fs::write(&events_path, &output.stdout)
         .with_context(|| format!("could not write {}", events_path.display()))?;
@@ -228,7 +235,7 @@ fn hook_config(hook_path: &Path) -> String {
 hooks = true
 
 [[hooks.PostToolUse]]
-matcher = "*"
+matcher = "Bash"
 
 [[hooks.PostToolUse.hooks]]
 type = "command"
@@ -243,7 +250,7 @@ fn hook_json(hook_path: &Path) -> String {
     serde_json::json!({
         "hooks": {
             "PostToolUse": [{
-                "matcher": "*",
+                "matcher": "Bash",
                 "hooks": [{
                     "type": "command",
                     "command": hook_command(hook_path),
@@ -256,10 +263,25 @@ fn hook_json(hook_path: &Path) -> String {
     .to_string()
 }
 
-fn cli_hook_override(hook_path: &Path) -> String {
+fn isolated_user_config(workspace: &Path, hook_path: &Path) -> String {
     let command = hook_command(hook_path);
+    let workspace = toml_basic_string(&workspace.display().to_string());
     format!(
-        "hooks.PostToolUse=[{{matcher=\"*\", hooks=[{{type=\"command\", command={command:?}, timeout=30, statusMessage=\"Context Firewall canary\"}}]}}]"
+        r#"[features]
+hooks = true
+
+[projects.{workspace}]
+trust_level = "trusted"
+
+[[hooks.PostToolUse]]
+matcher = "Bash"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = {command:?}
+timeout = 30
+statusMessage = "Context Firewall canary"
+"#
     )
 }
 
@@ -305,6 +327,29 @@ fn codex_home() -> Result<PathBuf> {
     }
     let home = std::env::var("HOME").context("HOME is not set; cannot locate CODEX_HOME")?;
     Ok(PathBuf::from(home).join(".codex"))
+}
+
+fn copy_codex_auth(source_home: &Path, isolated_home: &Path) -> Result<()> {
+    let source = source_home.join("auth.json");
+    if !source.is_file() {
+        bail!(
+            "CodexAuthMissing: expected real auth file at {}; run `codex login` first",
+            source.display()
+        );
+    }
+    let destination = isolated_home.join("auth.json");
+    fs::copy(&source, &destination).with_context(|| {
+        format!(
+            "could not copy Codex auth from {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn toml_basic_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn hook_script(

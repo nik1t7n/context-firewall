@@ -20,6 +20,8 @@ Context Firewall is a standalone Rust workspace with:
 - secret-like raw output guard on `cfw show`.
 - structured `argv` in span metadata.
 - proof-based duplicate output detection using command, cwd, exit code, and raw output hash, applied only when the duplicate receipt is smaller than the normal reduced output.
+- explicit stdin file hashes in repeat evidence through `cfw run --stdin-file`.
+- command-specific dependency fingerprints for Cargo, Node package managers, and Python/pytest-style commands.
 - explicit Codex wrapper adapter installation.
 - Codex wrapper dry-run and managed block uninstall.
 - real `cfw canary codex-hook-replacement` command.
@@ -51,7 +53,7 @@ Tasks:
 - Return compact replacement output through `PostToolUse` hook feedback. Implemented, but not observed in `codex exec`.
 - Verify raw marker is absent from the model-visible transcript/tool result. Implemented; currently fails on `codex-cli 0.139.0`.
 - Record delivery status as `replaced_tool_result` only when proven.
-- Add negative canary for hook failure.
+- Add negative canary for hook failure. Done.
 
 Latest real result:
 
@@ -61,6 +63,8 @@ Latest real result:
 - Observed event shape: shell execution is emitted as `command_execution`.
 - Hook evidence: `hook-input.json` and `hook-output.json` are absent.
 - Model-visible evidence: the final response contains the raw marker and does not contain the compact marker.
+- Additional manual real probe: a `PreToolUse` hook configured in an isolated temporary `CODEX_HOME` did not block `cat raw-marker.txt`; no hook input file was written.
+- Current inference: `codex exec` is not dispatching configured hooks on this command execution path in `codex-cli 0.139.0`.
 
 Decision:
 
@@ -135,10 +139,7 @@ Started. Current repeat detection uses:
 - policy engine version and policy config hash.
 - direct argv input file hashes when the files are known.
 - explicit `--stdin-file` content hash.
-
-Remaining repeat key inputs:
-
-- command-specific dependency fingerprints for package managers and test runners.
+- command-specific dependency fingerprints for Cargo, Node package managers, and Python/pytest-style commands.
 
 Never label a situation "unchanged" unless the repeat key proves it.
 
