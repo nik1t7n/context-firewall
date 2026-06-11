@@ -134,10 +134,10 @@ Started. Current repeat detection uses:
 - selected env allowlist hash.
 - policy engine version and policy config hash.
 - direct argv input file hashes when the files are known.
+- explicit `--stdin-file` content hash.
 
 Remaining repeat key inputs:
 
-- stdin content hash when commands consume stdin through Context Firewall.
 - command-specific dependency fingerprints for package managers and test runners.
 
 Never label a situation "unchanged" unless the repeat key proves it.

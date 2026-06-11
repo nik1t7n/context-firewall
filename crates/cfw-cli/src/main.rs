@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -115,9 +116,20 @@ struct RunArgs {
     #[arg(long, default_value = "generic")]
     kind: String,
 
+    /// Read this file and pass its exact bytes to the command's stdin.
+    #[arg(long, value_name = "PATH")]
+    stdin_file: Option<PathBuf>,
+
     /// Command and arguments to execute.
     #[arg(last = true, required = true)]
     command: Vec<String>,
+}
+
+#[derive(Debug)]
+struct StdinEvidence {
+    path: PathBuf,
+    bytes: usize,
+    hash: String,
 }
 
 #[derive(Debug, Args)]
@@ -251,6 +263,7 @@ fn first_run() -> Result<()> {
     eprintln!("Context Firewall first run: executing a real local command through cfw run.");
     run_command(RunArgs {
         kind: "test-output".to_string(),
+        stdin_file: None,
         command: vec![
             "sh".to_string(),
             "-c".to_string(),
@@ -344,12 +357,56 @@ fn run_command(args: RunArgs) -> Result<()> {
         _ => {}
     }
 
-    let output = Command::new(program)
+    let (stdin_evidence, stdin_bytes) = match read_stdin_payload(args.stdin_file.as_deref())? {
+        Some((evidence, bytes)) => (Some(evidence), Some(bytes)),
+        None => (None, None),
+    };
+    let mut command = Command::new(program);
+    command
         .args(rest)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+        .stderr(Stdio::piped());
+    if stdin_bytes.is_some() {
+        command.stdin(Stdio::piped());
+    }
+    let mut child = command
+        .spawn()
         .with_context(|| format!("CfwExecutionError: could not run `{command_text}`"))?;
+    let stdin_writer = if let Some(bytes) = stdin_bytes {
+        let Some(mut stdin) = child.stdin.take() else {
+            bail!("CfwExecutionError: stdin pipe was not available for `{command_text}`");
+        };
+        let path = stdin_evidence
+            .as_ref()
+            .expect("stdin evidence exists when stdin bytes exist")
+            .path
+            .clone();
+        Some(std::thread::spawn(move || -> Result<()> {
+            match stdin.write_all(&bytes) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "CfwExecutionError: could not write stdin from {}",
+                            path.display()
+                        )
+                    });
+                }
+            }
+            Ok(())
+        }))
+    } else {
+        None
+    };
+    let output = child.wait_with_output().with_context(|| {
+        format!("CfwExecutionError: could not collect output for `{command_text}`")
+    })?;
+    if let Some(writer) = stdin_writer {
+        writer
+            .join()
+            .map_err(|_| anyhow::anyhow!("CfwExecutionError: stdin writer thread panicked"))??;
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -387,8 +444,14 @@ fn run_command(args: RunArgs) -> Result<()> {
     std::fs::write(&stderr_path, output.stderr.as_slice())
         .with_context(|| format!("could not write {}", stderr_path.display()))?;
     let hash = blake3::hash(raw.as_bytes()).to_hex().to_string();
-    let repeat_fingerprint =
-        repeat_fingerprint(&args.command, &cwd, output.status.code(), &hash, &paths)?;
+    let repeat_fingerprint = repeat_fingerprint(
+        &args.command,
+        &cwd,
+        output.status.code(),
+        &hash,
+        &paths,
+        stdin_evidence.as_ref(),
+    )?;
     let repeat_key = hash_json_value(&repeat_fingerprint);
 
     let meta = serde_json::json!({
@@ -401,6 +464,7 @@ fn run_command(args: RunArgs) -> Result<()> {
         "stdout_path": stdout_path.display().to_string(),
         "stderr_path": stderr_path.display().to_string(),
         "combined_path": artifact_path.display().to_string(),
+        "stdin": stdin_evidence.as_ref().map(stdin_evidence_json),
         "repeat_key": repeat_key.clone(),
         "repeat_fingerprint": repeat_fingerprint,
     });
@@ -720,6 +784,7 @@ fn repeat_fingerprint(
     exit_code: Option<i32>,
     raw_output_hash: &str,
     paths: &StorePaths,
+    stdin_evidence: Option<&StdinEvidence>,
 ) -> Result<serde_json::Value> {
     let (env_hash, env_present) = selected_env_hash();
     Ok(serde_json::json!({
@@ -741,7 +806,47 @@ fn repeat_fingerprint(
             "config_hash": policy_config_hash(paths)?,
         },
         "input_files": input_file_hashes(argv, cwd)?,
+        "stdin": stdin_evidence.map(stdin_evidence_json),
     }))
+}
+
+fn read_stdin_payload(path: Option<&Path>) -> Result<Option<(StdinEvidence, Vec<u8>)>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let canonical = path.canonicalize().with_context(|| {
+        format!(
+            "CfwExecutionError: could not canonicalize stdin file {}",
+            path.display()
+        )
+    })?;
+    if !canonical.is_file() {
+        bail!(
+            "CfwExecutionError: stdin file is not a regular file: {}",
+            canonical.display()
+        );
+    }
+    let bytes = std::fs::read(&canonical).with_context(|| {
+        format!(
+            "CfwExecutionError: could not read stdin file {}",
+            canonical.display()
+        )
+    })?;
+    let evidence = StdinEvidence {
+        path: canonical,
+        bytes: bytes.len(),
+        hash: blake3::hash(&bytes).to_hex().to_string(),
+    };
+    Ok(Some((evidence, bytes)))
+}
+
+fn stdin_evidence_json(evidence: &StdinEvidence) -> serde_json::Value {
+    serde_json::json!({
+        "source": "file",
+        "path": evidence.path.display().to_string(),
+        "bytes": evidence.bytes,
+        "hash": evidence.hash,
+    })
 }
 
 fn hash_json_value(value: &serde_json::Value) -> String {

@@ -319,6 +319,79 @@ fn changed_input_file_prevents_duplicate_handle_even_with_same_output() {
 }
 
 #[test]
+fn changed_stdin_file_prevents_duplicate_handle_even_with_same_output() {
+    let data = TempDir::new().expect("data dir");
+    let work = TempDir::new().expect("work dir");
+    let stdin_file = work.path().join("stdin.txt");
+    std::fs::write(&stdin_file, "version one\n").expect("write first stdin");
+
+    let stdin_arg = stdin_file.to_str().expect("utf8 stdin path");
+    let stdin_canonical = stdin_file
+        .canonicalize()
+        .expect("canonical stdin path")
+        .display()
+        .to_string();
+    let script =
+        "while read line; do :; done; i=1; while [ $i -le 220 ]; do echo $i; i=$((i + 1)); done";
+
+    let mut first = Command::cargo_bin("cfw").expect("cfw binary");
+    first
+        .env("CFW_DATA_DIR", data.path())
+        .env("CFW_SESSION", "stdin-fingerprint-session")
+        .current_dir(work.path())
+        .args(["run", "--stdin-file", stdin_arg, "--", "sh", "-c", script])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("duplicate output").not());
+
+    std::fs::write(&stdin_file, "version two\n").expect("write second stdin");
+
+    let mut second = Command::cargo_bin("cfw").expect("cfw binary");
+    second
+        .env("CFW_DATA_DIR", data.path())
+        .env("CFW_SESSION", "stdin-fingerprint-session")
+        .current_dir(work.path())
+        .args(["run", "--stdin-file", stdin_arg, "--", "sh", "-c", script])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("duplicate output").not());
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    let spans_output = spans
+        .env("CFW_DATA_DIR", data.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"risk_class\": \"deduped\"").not())
+        .get_output()
+        .stdout
+        .clone();
+    let spans_json: serde_json::Value = serde_json::from_slice(&spans_output).expect("spans json");
+    let spans = spans_json.as_array().expect("spans array");
+    assert_eq!(spans.len(), 2);
+    let mut stdin_hashes = spans
+        .iter()
+        .map(|span| {
+            let evidence: serde_json::Value = serde_json::from_str(
+                span["repeat_evidence_json"]
+                    .as_str()
+                    .expect("evidence json"),
+            )
+            .expect("repeat evidence");
+            assert_eq!(evidence["stdin"]["source"], "file");
+            assert_eq!(evidence["stdin"]["path"], stdin_canonical);
+            evidence["stdin"]["hash"]
+                .as_str()
+                .expect("stdin hash")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    stdin_hashes.sort();
+    stdin_hashes.dedup();
+    assert_eq!(stdin_hashes.len(), 2);
+}
+
+#[test]
 fn repeated_tiny_output_is_not_deduped_when_receipt_would_be_larger() {
     let temp = TempDir::new().expect("temp dir");
 

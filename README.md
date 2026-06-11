@@ -21,6 +21,7 @@ cfw run -- cargo test
 cfw run -- grep -R "TODO" crates
 cfw run -- cat app.log
 cfw run -- cat payload.json
+cfw run --stdin-file payload.json -- jq '.items | length'
 cfw spans
 cfw receipt
 cfw receipt --schema
@@ -88,7 +89,8 @@ Policy blocks obvious context waste such as dependency/build path reads and bina
 - `cfw receipt --schema` prints the JSON Schema for `cfw receipt --json`.
 - `cfw purge --older-than-days N` or `cfw purge --all` deletes local span rows and artifact files from the active data dir.
 - span metadata stores structured `argv` alongside command text, cwd, exit code, and split stdout/stderr artifact paths.
-- repeated command output is deduped only when command, cwd, exit code, and raw output hash match a previous span, and the duplicate receipt is smaller than the normal reduced output.
+- `cfw run --stdin-file <path> -- <command>` feeds exact file bytes to command stdin and includes the stdin hash in repeat evidence.
+- repeated command output is deduped only when command, cwd, exit code, stdin evidence, and raw output hash match a previous span, and the duplicate receipt is smaller than the normal reduced output.
 
 ## Codex
 

@@ -93,8 +93,8 @@ Current duplicate-output detection uses:
 - selected environment allowlist hash
 - policy engine version and policy config hash
 - direct argv input file hashes when those files are known
+- explicit `--stdin-file` content hash
 
 Remaining hardening:
 
-- stdin content hash when commands consume stdin through Context Firewall
 - command-specific dependency fingerprints for package managers and test runners
