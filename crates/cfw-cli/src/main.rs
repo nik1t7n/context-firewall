@@ -1053,10 +1053,8 @@ fn command_dependency_families(argv: &[String]) -> BTreeSet<DependencyFamily> {
         "pytest" | "py.test" | "ruff" | "mypy" | "tox" => {
             families.insert(DependencyFamily::Python);
         }
-        "python" | "python3" | "uv" | "poetry" => {
-            if command_invokes_pytest(argv) {
-                families.insert(DependencyFamily::Python);
-            }
+        "python" | "python3" | "uv" | "poetry" if command_invokes_pytest(argv) => {
+            families.insert(DependencyFamily::Python);
         }
         _ => {}
     }
