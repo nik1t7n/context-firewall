@@ -61,6 +61,9 @@ Every number above was produced by real CLI runs on this repo.
 # install from source
 cargo install --path crates/cfw-cli
 
+# open the launch screen
+cfw
+
 # run noisy commands through the firewall
 cfw run -- cargo test
 cfw run -- rg -n "TODO|FIXME" crates docs

@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::io::IsTerminal;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -41,7 +42,7 @@ const ENV_REPEAT_ALLOWLIST: &[&str] = &[
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -244,7 +245,11 @@ fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    match cli.command {
+    let Some(command) = cli.command else {
+        print_launch_screen();
+        return Ok(());
+    };
+    match command {
         Commands::Install(args) => install(args),
         Commands::Uninstall(args) => uninstall(args),
         Commands::FirstRun => first_run(),
@@ -262,7 +267,7 @@ fn main() -> Result<()> {
 }
 
 fn first_run() -> Result<()> {
-    eprintln!("Context Firewall first run: executing a real local command through cfw run.");
+    print_first_run_intro();
     run_command(RunArgs {
         kind: "test-output".to_string(),
         stdin_file: None,
@@ -273,6 +278,83 @@ fn first_run() -> Result<()> {
                 .to_string(),
         ],
     })
+}
+
+fn print_launch_screen() {
+    let colors = terminal_colors_enabled();
+    let lines = [
+        "   ______            __            __     _______                         ____",
+        "  / ____/___  ____  / /____  _  __/ /_   / ____(_)_______ _      ______ _/ / /",
+        " / /   / __ \\/ __ \\/ __/ _ \\| |/_/ __/  / /_  / / ___/ _ \\ | /| / / __ `/ / / ",
+        "/ /___/ /_/ / / / / /_/  __/>  </ /_   / __/ / / /  /  __/ |/ |/ / /_/ / / /  ",
+        "\\____/\\____/_/ /_/\\__/\\___/_/|_|\\__/  /_/   /_/_/   \\___/|__/|__/\\__,_/_/_/   ",
+    ];
+    for (index, line) in lines.iter().enumerate() {
+        println!("{}", flame(line, index, colors));
+    }
+    println!();
+    println!("{}", accent("Context Firewall", colors));
+    println!(
+        "{}",
+        accent("Local-first token control for coding agents", colors)
+    );
+    println!("Stores full command output locally. Returns compact evidence to the agent.");
+    println!();
+    println!("{}", label("Start", colors));
+    println!("  cfw first-run");
+    println!("  cfw install codex --mode wrapper --write-agents");
+    println!("  cfw run -- cargo test");
+    println!();
+    println!("{}", label("Inspect", colors));
+    println!("  cfw receipt");
+    println!("  cfw top");
+    println!("  cfw doctor codex");
+}
+
+fn print_first_run_intro() {
+    let colors = terminal_colors_enabled();
+    println!("{}", label("Context Firewall first run", colors));
+    println!("Executing a real local command through cfw run.");
+    println!();
+}
+
+fn terminal_colors_enabled() -> bool {
+    match std::env::var("CFW_COLOR").as_deref() {
+        Ok("always") => true,
+        Ok("never") => false,
+        _ => std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal(),
+    }
+}
+
+fn flame(text: &str, index: usize, enabled: bool) -> String {
+    if !enabled {
+        return text.to_string();
+    }
+    let colors = [
+        (255, 28, 28),
+        (255, 54, 24),
+        (255, 83, 17),
+        (255, 111, 10),
+        (255, 67, 23),
+    ];
+    let (r, g, b) = colors[index % colors.len()];
+    format!("\x1b[1;38;2;{r};{g};{b}m{text}\x1b[0m")
+}
+
+fn accent(text: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[1;38;2;255;65;24m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn label(text: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[1;38;2;255;111;10m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
 }
 
 fn install(args: InstallArgs) -> Result<()> {

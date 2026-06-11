@@ -3,6 +3,28 @@ use predicates::prelude::*;
 use tempfile::TempDir;
 
 #[test]
+fn no_args_shows_launch_screen() {
+    let mut cfw = Command::cargo_bin("cfw").expect("cfw binary");
+    cfw.assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall"))
+        .stdout(predicate::str::contains("cfw first-run"))
+        .stdout(predicate::str::contains(
+            "cfw install codex --mode wrapper --write-agents",
+        ));
+}
+
+#[test]
+fn launch_screen_can_force_color() {
+    let mut cfw = Command::cargo_bin("cfw").expect("cfw binary");
+    cfw.env("CFW_COLOR", "always")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\u{1b}[1;38;2;255;28;28m"))
+        .stdout(predicate::str::contains("\u{1b}[1;38;2;255;111;10mStart"));
+}
+
+#[test]
 fn run_receipt_and_show_use_real_artifacts() {
     let temp = TempDir::new().expect("temp dir");
 
