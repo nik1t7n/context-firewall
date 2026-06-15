@@ -56,43 +56,64 @@ cfw run -- cargo test
 
 The agent sees the signal. You keep the evidence.
 
-## Quick Start
+## Quick Start For Agents
 
-```bash
-# macOS / Linux, after the first tagged release
-brew install nik1t7n/tap/cfw
+If you are a human, paste this prompt into the coding agent you use for your
+repo. If you are the agent, read it and execute it.
 
-# npm / npx, after the first tagged release
-npm install -g @nik1t7n/context-firewall
-npx @nik1t7n/context-firewall --help
+```text
+Set up Context Firewall for this repository.
 
-# from this checkout today
-cargo install --path crates/cfw-cli
+Goal: from now on, route noisy terminal output through Context Firewall so I
+keep compact signal in context and raw stdout/stderr on disk for exact
+retrieval.
 
-cfw install agent
+1. Check whether `cfw` is installed:
+   - Run `cfw --version`.
+   - If it works, continue.
+   - If it is missing, install it through the first real path available here:
+     - In the Context Firewall source checkout: `cargo install --path crates/cfw-cli`
+     - macOS/Linux after release: `brew install nik1t7n/tap/cfw`
+     - npm/npx after release: `npm install -g @nik1t7n/context-firewall`
+     - GitHub release installer:
+       `curl --proto '=https' --tlsv1.2 -LsSf https://github.com/nik1t7n/context-firewall/releases/latest/download/cfw-installer.sh | sh`
+     - Windows PowerShell after release:
+       `irm https://github.com/nik1t7n/context-firewall/releases/latest/download/cfw-installer.ps1 | iex`
+   - Do not pretend it worked. If every real install path fails, stop and
+     report the exact blocker.
+
+2. Install the adapter for the agent host you are running in:
+   - Gemini CLI: `cfw install gemini`
+   - Antigravity: `cfw install antigravity`
+   - Claude Code: `cfw install claude`
+   - Cursor: `cfw install cursor`
+   - Unknown or generic agent: `cfw install agent`
+
+3. Verify the setup:
+   - Run `cfw receipt --json`.
+   - If MCP tools are available, call `cfw_receipt`.
+   - Confirm that `cfw_run`, `cfw_show`, `cfw_spans`, and `cfw_receipt` are
+     available, or that `cfw run -- <command>` works from the shell.
+
+4. Use Context Firewall from now on:
+   - Tests: `cfw_run` or `cfw run -- cargo test`
+   - Search: `cfw_run` or `cfw run -- rg -n "TODO|FIXME" .`
+   - Diffs: `cfw_run` or `cfw run -- git diff`
+   - Logs and large files: `cfw_run` or `cfw run -- cat app.log`
+
+5. When exact output is needed:
+   - List spans: `cfw_spans` or `cfw spans`
+   - Retrieve lines: `cfw_show` or `cfw show <span-id> --lines 120:180`
+   - Check savings: `cfw_receipt` or `cfw receipt --json`
 ```
 
-Then run noisy commands through the firewall:
-
-```bash
-cfw run -- cargo test
-cfw run -- rg -n "TODO|FIXME" crates docs
-cfw run -- git diff
-cfw run -- cat app.log
-```
-
-Need the original output?
-
-```bash
-cfw spans
-cfw show <span-id> --lines 120:180
-cfw receipt --json
-```
+Context Firewall uses MCP over stdio, so compatible agent clients can run
+`cfw mcp` locally and call the tools directly.
 
 ## Agent Integrations
 
-Context Firewall speaks MCP and ships installers for the agent surfaces people
-actually use.
+Context Firewall speaks MCP and ships installers that agents can run inside the
+project they are working on.
 
 ```bash
 # Generic AGENTS.md instructions
