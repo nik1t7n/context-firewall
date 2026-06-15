@@ -1,0 +1,10 @@
+/target/
+/.DS_Store
+/.idea/
+/.vscode/
+/.antigravitycli/
+*.swp
+*.swo
+
+# Local Context Firewall state must never be committed.
+/.context-firewall/

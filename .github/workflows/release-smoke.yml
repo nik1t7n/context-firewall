@@ -1,0 +1,76 @@
+name: Release Smoke
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to test. Defaults to latest release."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  published-artifact-smoke:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon release artifact
+            os: macos-14
+            asset: cfw-aarch64-apple-darwin.tar.xz
+          - name: Linux x64 release artifact
+            os: ubuntu-22.04
+            asset: cfw-x86_64-unknown-linux-gnu.tar.xz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT_TAG}" ]]; then
+            tag="${INPUT_TAG}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
+          else
+            tag="$(gh release view --json tagName --jq .tagName)"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-smoke
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --pattern "${{ matrix.asset }}" \
+            --dir dist-smoke \
+            --clobber
+
+      - name: Extract cfw
+        id: extract
+        run: |
+          set -euo pipefail
+          tar -xf "dist-smoke/${{ matrix.asset }}" -C dist-smoke
+          bin="$(find dist-smoke -type f -name cfw -perm -111 | head -n 1)"
+          if [[ -z "${bin}" ]]; then
+            echo "cfw binary not found in ${{ matrix.asset }}" >&2
+            find dist-smoke -maxdepth 3 -type f >&2
+            exit 1
+          fi
+          echo "bin=${bin}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test release binary
+        run: scripts/release-smoke.sh "${{ steps.extract.outputs.bin }}"
