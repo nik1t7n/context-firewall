@@ -24,10 +24,10 @@ github-attestations-phase = "host"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew", "npm"]
 # A GitHub repo to push Homebrew formulas to
-tap = "Nomads-AI-Lab/homebrew-tap"
+tap = "nik1t7n/homebrew-tap"
 # Customize the Homebrew formula name
 formula = "cfw"
 # A namespace to use when publishing this package to the npm registry
-npm-scope = "@nomads-ai-lab"
+npm-scope = "@nik1t7n"
 # The npm package should have this name
 npm-package = "context-firewall"

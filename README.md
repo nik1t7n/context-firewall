@@ -57,11 +57,11 @@ The agent sees the signal. You keep the evidence.
 
 ```bash
 # macOS / Linux, after the first tagged release
-brew install nomads-ai-lab/tap/cfw
+brew install nik1t7n/tap/cfw
 
 # npm / npx, after the first tagged release
-npm install -g @nomads-ai-lab/context-firewall
-npx @nomads-ai-lab/context-firewall --help
+npm install -g @nik1t7n/context-firewall
+npx @nik1t7n/context-firewall --help
 
 # from this checkout today
 cargo install --path crates/cfw-cli

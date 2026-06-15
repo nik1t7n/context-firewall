@@ -170,7 +170,7 @@ Started. Current launch surface includes:
 - cargo-dist release workflow.
 - release artifacts for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc`.
 - shell and PowerShell installers.
-- Homebrew formula generation and tap publishing to `Nomads-AI-Lab/homebrew-tap`.
+- Homebrew formula generation and tap publishing to `nik1t7n/homebrew-tap`.
 - GitHub Artifact Attestations in the host phase.
 - sha256 sums and source tarballs.
 - release smoke workflow that downloads published GitHub artifacts and runs real CLI checks.

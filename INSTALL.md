@@ -27,41 +27,41 @@ These channels are produced by the release pipeline.
 ### macOS and Linux with Homebrew
 
 ```bash
-brew install nomads-ai-lab/tap/cfw
+brew install nik1t7n/tap/cfw
 ```
 
 If Homebrew asks you to tap first:
 
 ```bash
-brew tap nomads-ai-lab/tap
+brew tap nik1t7n/tap
 brew install cfw
 ```
 
 ### npm and npx
 
 ```bash
-npm install -g @nomads-ai-lab/context-firewall
+npm install -g @nik1t7n/context-firewall
 ```
 
 Run without a global install:
 
 ```bash
-npx @nomads-ai-lab/context-firewall --help
-npx @nomads-ai-lab/context-firewall install gemini
+npx @nik1t7n/context-firewall --help
+npx @nik1t7n/context-firewall install gemini
 ```
 
 ### Shell Installer
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/Nomads-AI-Lab/context-firewall/releases/latest/download/cfw-installer.sh \
+  https://github.com/nik1t7n/context-firewall/releases/latest/download/cfw-installer.sh \
   | sh
 ```
 
 ### Windows PowerShell
 
 ```powershell
-irm https://github.com/Nomads-AI-Lab/context-firewall/releases/latest/download/cfw-installer.ps1 | iex
+irm https://github.com/nik1t7n/context-firewall/releases/latest/download/cfw-installer.ps1 | iex
 ```
 
 ### Rust Users
@@ -90,13 +90,13 @@ cfw receipt
 
 Before the public install commands work, the project owner needs to provide:
 
-- A pushed GitHub repository at `Nomads-AI-Lab/context-firewall`.
+- A pushed GitHub repository at `nik1t7n/context-firewall`.
 - A first SemVer tag, for example `v0.1.0`.
 - A GitHub repository secret named `NPM_TOKEN` with publish access to
-  `@nomads-ai-lab/context-firewall`.
-- An npm organization or scope named `@nomads-ai-lab`, or a different package
+  `@nik1t7n/context-firewall`.
+- An npm organization or scope named `@nik1t7n`, or a different package
   scope configured in `dist-workspace.toml`.
-- A GitHub repository named `Nomads-AI-Lab/homebrew-tap`.
+- A GitHub repository named `nik1t7n/homebrew-tap`.
 - A GitHub repository secret named `HOMEBREW_TAP_TOKEN` with permission to push
   to the Homebrew tap repository.
 
