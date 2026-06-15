@@ -4,9 +4,11 @@
 
 ### Stop wasting agent context on terminal noise.
 
-Context Firewall is a local-first context firewall for coding agents. It runs
-your real commands, gives the agent the compact signal, and keeps the full raw
-evidence on disk for when you need it.
+Coding agents waste scarce context on terminal noise: logs, diffs, test output,
+and search results crowd out the code they need to understand.
+
+Context Firewall runs real commands, gives agents the compact signal, and keeps
+full raw evidence on disk for exact retrieval.
 
 ![Rust 2024](https://img.shields.io/badge/Rust-2024-f74c00?style=for-the-badge)
 ![Local First](https://img.shields.io/badge/local--first-2ea043?style=for-the-badge)
