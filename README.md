@@ -7,8 +7,9 @@
 Coding agents waste scarce context on terminal noise: logs, diffs, test output,
 and search results crowd out the code they need to understand.
 
-Context Firewall runs real commands, gives agents the compact signal, and keeps
-full raw evidence on disk for exact retrieval.
+Context Firewall solves this by giving agents the compact signal and keeping
+raw evidence available for precise retrieval, saving up to 84% of context for
+useful work.
 
 ![Rust 2024](https://img.shields.io/badge/Rust-2024-f74c00?style=for-the-badge)
 ![Local First](https://img.shields.io/badge/local--first-2ea043?style=for-the-badge)
