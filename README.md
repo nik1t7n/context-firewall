@@ -152,8 +152,8 @@ Tools exposed over MCP:
 Instead of feeding the agent a wall of output:
 
 ```text
-docs/global-plan.md:...
-docs/comparison.md:...
+README.md:...
+INSTALL.md:...
 crates/cfw-cli/src/main.rs:...
 crates/cfw-cli/tests/cli.rs:...
 ... hundreds of lines ...
@@ -163,12 +163,12 @@ Context Firewall returns the shape of the result:
 
 ```text
 [context-firewall: search summary]
-files matched: 19
-raw match lines: 499
+files matched: 18
+raw match lines: 318
 
 README.md
   3:# Context Firewall
-  32:Context Firewall puts a clean boundary...
+  40:Context Firewall puts a clean boundary...
 
 crates/cfw-cli/src/main.rs
   10:use cfw_core::receipt::{...}
@@ -176,8 +176,8 @@ crates/cfw-cli/src/main.rs
 
 [context-firewall]
 span: cfw://span/019ecaf492c07370a55c6943fc98021b
-raw: 43,512 bytes, estimated 10,878 tokens
-returned: 6,870 bytes, estimated 1,718 tokens
+raw: 26,989 bytes, estimated 6,748 tokens
+returned: 4,353 bytes, estimated 1,089 tokens
 full output stored locally
 [/context-firewall]
 ```
@@ -191,18 +191,18 @@ Measured on this repository with `cfw 0.1.0`.
 
 | Command | Raw estimated tokens | Returned estimated tokens | Reduction |
 | --- | ---: | ---: | ---: |
-| Repository search across docs, crates, and README | 10,878 | 1,718 | 84.21% |
-| `cargo test` | 1,319 | 999 | 24.26% |
-| Local two-command session | 12,197 | 2,717 | 77.72% |
+| Repository search across docs, crates, and README | 6,748 | 1,089 | 83.86% |
+| `cargo test` | 1,349 | 1,000 | 25.87% |
+| Local two-command session | 8,097 | 2,089 | 74.20% |
 
 Receipt:
 
 ```json
 {
   "spans": 2,
-  "raw_estimated_tokens": 12197,
-  "returned_estimated_tokens": 2717,
-  "net_estimated_saved": 9480
+  "raw_estimated_tokens": 8097,
+  "returned_estimated_tokens": 2089,
+  "net_estimated_saved": 6008
 }
 ```
 
@@ -277,7 +277,7 @@ scripts/release-smoke.sh target/debug/cfw
 ```
 
 See [INSTALL.md](INSTALL.md) for Homebrew, npm/npx, shell installer,
-PowerShell, Rust, and release-owner setup.
+PowerShell, Rust, and maintainer release setup.
 
 ## Project Status
 
@@ -293,7 +293,7 @@ The broader goal is simple:
 - [Comparison](docs/comparison.md)
 - [Security model](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
-- [Implementation notes](docs/implementation-plan.md)
+- [Install guide](INSTALL.md)
 
 ## License
 

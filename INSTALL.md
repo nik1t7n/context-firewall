@@ -86,9 +86,9 @@ cfw --version
 cfw receipt
 ```
 
-## Release Owner Checklist
+## Maintainer Release Checklist
 
-Before the public install commands work, the project owner needs to provide:
+Before release-based install commands work, the maintainer needs:
 
 - A pushed GitHub repository at `nik1t7n/context-firewall`.
 - A first SemVer tag, for example `v0.1.0`.

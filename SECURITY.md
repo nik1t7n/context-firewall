@@ -10,7 +10,6 @@ Context Firewall handles raw command output. That output can include private sou
 - `cfw show` blocks secret-like raw output unless the user passes `--force`.
 - `cfw purge` deletes local span rows and artifact files from the active data directory.
 - Receipts only count savings from delivery states that prove compact output was returned to the agent.
-- Hook-native Codex install remains blocked until the real output-replacement canary passes.
 
 ## Data Stored Locally
 

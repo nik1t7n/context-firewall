@@ -54,14 +54,14 @@ Use the host target that matches the release machine when testing on Intel macOS
 
 ## Adapters
 
-- Codex hook-native mode must stay blocked until `cfw canary codex-hook-replacement` proves output replacement.
-- Adapter install paths must distinguish advisory, observed, and replaced delivery states.
-- Do not silently downgrade from hook-native to wrapper mode.
+- Adapter install paths must write real MCP or rule configuration.
+- Adapter installers must be idempotent.
+- If an adapter cannot configure the real host, fail clearly instead of writing
+  a fake or partial integration.
 
 ## Security
 
 - Do not add LLM-based reducers to core.
 - Do not add telemetry without an explicit design review.
-- Do not count observed-only spans as saved tokens.
 - Preserve full raw artifacts unless a feature explicitly purges them.
 - Treat raw command output as potentially secret.

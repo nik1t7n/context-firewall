@@ -7,19 +7,23 @@ repository.workspace = true
 homepage.workspace = true
 description.workspace = true
 readme.workspace = true
+publish = false
 
 [[bin]]
 name = "cfw"
 path = "src/main.rs"
 
+[package.metadata.dist]
+dist = true
+
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
-cfw-codex = { path = "../cfw-codex" }
-cfw-core = { path = "../cfw-core" }
-cfw-policy = { path = "../cfw-policy" }
-cfw-reducers = { path = "../cfw-reducers" }
-cfw-store = { path = "../cfw-store" }
+cfw-codex = { path = "../cfw-codex", version = "0.1.0" }
+cfw-core = { path = "../cfw-core", version = "0.1.0" }
+cfw-policy = { path = "../cfw-policy", version = "0.1.0" }
+cfw-reducers = { path = "../cfw-reducers", version = "0.1.0" }
+cfw-store = { path = "../cfw-store", version = "0.1.0" }
 chrono.workspace = true
 clap.workspace = true
 regex.workspace = true
