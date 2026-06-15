@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
-use std::io::IsTerminal;
-use std::io::Write;
+use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -73,6 +72,8 @@ enum Commands {
     Doctor(DoctorArgs),
     /// Run real integration canaries.
     Canary(CanaryArgs),
+    /// Run Context Firewall as a stdio MCP server.
+    Mcp,
 }
 
 #[derive(Debug, Args)]
@@ -263,6 +264,7 @@ fn main() -> Result<()> {
         Commands::Top(args) => top(args),
         Commands::Doctor(args) => doctor(args),
         Commands::Canary(args) => canary(args),
+        Commands::Mcp => mcp(),
     }
 }
 
@@ -308,13 +310,16 @@ fn print_launch_screen() {
     println!();
     println!("{}", label("Start", colors));
     println!("  cfw first-run");
-    println!("  cfw install codex --mode wrapper --write-agents");
+    println!("  cfw install agent");
+    println!("  cfw install gemini");
+    println!("  cfw install claude");
+    println!("  cfw install cursor");
     println!("  cfw run -- cargo test");
     println!();
     println!("{}", label("Inspect", colors));
     println!("  cfw receipt");
     println!("  cfw top");
-    println!("  cfw doctor codex");
+    println!("  cfw mcp");
 }
 
 fn print_first_run_intro() {
@@ -364,6 +369,21 @@ fn label(text: &str, enabled: bool) -> String {
 }
 
 fn install(args: InstallArgs) -> Result<()> {
+    match args.target.as_str() {
+        "codex" => install_codex(args),
+        "agent" | "agents" => install_agent(args),
+        "gemini" | "gemini-cli" => install_gemini(args),
+        "antigravity" | "agy" => install_antigravity(args),
+        "claude" | "claude-code" => install_claude(args),
+        "cursor" | "cursor-ai" => install_cursor(args),
+        _ => bail!(
+            "unsupported adapter `{}`; use agent, gemini, antigravity, claude, cursor, or codex",
+            args.target
+        ),
+    }
+}
+
+fn uninstall(args: UninstallArgs) -> Result<()> {
     if args.target != "codex" {
         bail!(
             "unsupported adapter `{}`; only `codex` is available",
@@ -371,17 +391,25 @@ fn install(args: InstallArgs) -> Result<()> {
         );
     }
 
+    let outcome = cfw_codex::install::uninstall_wrapper_snippet(&args.agents_path)?;
+    println!("Context Firewall Codex adapter");
+    println!("  mode: wrapper");
+    println!("  agents_path: {}", args.agents_path.display());
+    println!("  result: {:?}", outcome);
+    Ok(())
+}
+
+fn install_codex(args: InstallArgs) -> Result<()> {
     match args.mode {
         InstallMode::HookNative => {
             bail!(
-                "HookReplacementFailed: hook-native install is blocked until the Codex output-replacement canary passes. Use `cfw install codex --mode wrapper`."
-            );
+                "HookReplacementFailed: direct output replacement is not enabled by this installer. Use `cfw install codex --mode wrapper`."
+            )
         }
         InstallMode::Wrapper => {
-            println!("Context Firewall Codex adapter");
-            println!("  mode: wrapper");
-            println!("  enforcement: advisory");
-            println!("  hook_replacement_verified: false");
+            println!("Context Firewall agent adapter");
+            println!("  target: codex");
+            println!("  mcp: cfw mcp");
             if args.write_agents {
                 let outcome = if args.dry_run {
                     cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?
@@ -399,25 +427,299 @@ fn install(args: InstallArgs) -> Result<()> {
                 println!();
                 println!("{}", cfw_codex::install::wrapper_snippet());
             }
+            Ok(())
         }
+    }
+}
+
+fn install_agent(args: InstallArgs) -> Result<()> {
+    let outcome = if args.dry_run {
+        cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?
+    } else {
+        cfw_codex::install::write_wrapper_snippet(&args.agents_path)?
+    };
+    println!("Context Firewall agent adapter");
+    println!("  target: agent");
+    println!("  agents_path: {}", args.agents_path.display());
+    println!("  dry_run: {}", args.dry_run);
+    println!("  result: {:?}", outcome);
+    Ok(())
+}
+
+fn install_gemini(args: InstallArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("could not read current directory")?;
+    let mcp_path = cwd.join(".gemini").join("settings.json");
+    let user_mcp_path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".gemini/settings.json"));
+    let memory_path = cwd.join("GEMINI.md");
+    let mcp_result = write_mcp_config(
+        &mcp_path,
+        mcp_server_config(None, false, false),
+        args.dry_run,
+    )?;
+    let user_mcp_result = if let Some(path) = user_mcp_path.as_deref() {
+        Some(write_mcp_config(
+            path,
+            mcp_server_config(Some(&cwd), false, false),
+            args.dry_run,
+        )?)
+    } else {
+        None
+    };
+    let memory_result = write_agent_block(&memory_path, args.dry_run)?;
+    println!("Context Firewall agent adapter");
+    println!("  target: gemini");
+    println!("  mcp_path: {}", mcp_path.display());
+    if let Some(path) = user_mcp_path.as_deref() {
+        println!("  user_mcp_path: {}", path.display());
+    }
+    println!("  memory_path: {}", memory_path.display());
+    println!("  dry_run: {}", args.dry_run);
+    println!("  mcp_result: {:?}", mcp_result);
+    if let Some(result) = user_mcp_result {
+        println!("  user_mcp_result: {:?}", result);
+    }
+    println!("  memory_result: {:?}", memory_result);
+    Ok(())
+}
+
+fn install_antigravity(args: InstallArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("could not read current directory")?;
+    let mut paths = vec![cwd.join(".antigravity").join("mcp_config.json")];
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        paths.push(home.join(".gemini/antigravity-cli/mcp_config.json"));
+        paths.push(home.join(".gemini/antigravity/mcp_config.json"));
+    }
+
+    println!("Context Firewall agent adapter");
+    println!("  target: antigravity");
+    println!("  dry_run: {}", args.dry_run);
+    for path in paths {
+        let config = if path.starts_with(&cwd) {
+            mcp_server_config(None, false, true)
+        } else {
+            mcp_server_config(Some(&cwd), false, true)
+        };
+        let result = write_mcp_config(&path, config, args.dry_run)?;
+        println!("  {}: {:?}", path.display(), result);
     }
     Ok(())
 }
 
-fn uninstall(args: UninstallArgs) -> Result<()> {
-    if args.target != "codex" {
-        bail!(
-            "unsupported adapter `{}`; only `codex` is available",
-            args.target
-        );
-    }
-
-    let outcome = cfw_codex::install::uninstall_wrapper_snippet(&args.agents_path)?;
-    println!("Context Firewall Codex adapter");
-    println!("  mode: wrapper");
+fn install_claude(args: InstallArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("could not read current directory")?;
+    let agents_result = if args.dry_run {
+        cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?
+    } else {
+        cfw_codex::install::write_wrapper_snippet(&args.agents_path)?
+    };
+    let mcp_path = cwd.join(".mcp.json");
+    let claude_path = cwd.join("CLAUDE.md");
+    let mcp_result = write_mcp_config(
+        &mcp_path,
+        mcp_server_config(None, true, false),
+        args.dry_run,
+    )?;
+    let claude_result = write_claude_import(&claude_path, args.dry_run)?;
+    println!("Context Firewall agent adapter");
+    println!("  target: claude");
     println!("  agents_path: {}", args.agents_path.display());
-    println!("  result: {:?}", outcome);
+    println!("  mcp_path: {}", mcp_path.display());
+    println!("  claude_path: {}", claude_path.display());
+    println!("  dry_run: {}", args.dry_run);
+    println!("  agents_result: {:?}", agents_result);
+    println!("  mcp_result: {:?}", mcp_result);
+    println!("  claude_result: {:?}", claude_result);
     Ok(())
+}
+
+fn install_cursor(args: InstallArgs) -> Result<()> {
+    let cwd = std::env::current_dir().context("could not read current directory")?;
+    let agents_result = if args.dry_run {
+        cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?
+    } else {
+        cfw_codex::install::write_wrapper_snippet(&args.agents_path)?
+    };
+    let mcp_path = cwd.join(".cursor").join("mcp.json");
+    let rule_path = cwd
+        .join(".cursor")
+        .join("rules")
+        .join("context-firewall.mdc");
+    let mcp_result = write_mcp_config(
+        &mcp_path,
+        mcp_server_config(None, false, false),
+        args.dry_run,
+    )?;
+    let rule_result = write_cursor_rule(&rule_path, args.dry_run)?;
+    println!("Context Firewall agent adapter");
+    println!("  target: cursor");
+    println!("  agents_path: {}", args.agents_path.display());
+    println!("  mcp_path: {}", mcp_path.display());
+    println!("  rule_path: {}", rule_path.display());
+    println!("  dry_run: {}", args.dry_run);
+    println!("  agents_result: {:?}", agents_result);
+    println!("  mcp_result: {:?}", mcp_result);
+    println!("  rule_result: {:?}", rule_result);
+    Ok(())
+}
+
+fn mcp_server_config(
+    cwd: Option<&Path>,
+    include_type: bool,
+    include_disabled: bool,
+) -> serde_json::Value {
+    let mut config = serde_json::json!({
+        "command": "cfw",
+        "args": ["mcp"],
+    });
+    if let Some(cwd) = cwd {
+        config["cwd"] = serde_json::json!(cwd.display().to_string());
+    }
+    if include_type {
+        config["type"] = serde_json::json!("stdio");
+    }
+    if include_disabled {
+        config["disabled"] = serde_json::json!(false);
+    }
+    config
+}
+
+fn write_mcp_config(
+    path: &Path,
+    server_config: serde_json::Value,
+    dry_run: bool,
+) -> Result<cfw_codex::install::InstallOutcome> {
+    let mut root = match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str::<serde_json::Value>(&content)
+            .with_context(|| format!("could not parse {}", path.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not read {}", path.display()));
+        }
+    };
+    if !root.is_object() {
+        bail!("{} must contain a JSON object", path.display());
+    }
+    if !root
+        .get("mcpServers")
+        .is_some_and(|value| value.is_object())
+    {
+        root["mcpServers"] = serde_json::json!({});
+    }
+    if root["mcpServers"]["context-firewall"] == server_config {
+        return Ok(cfw_codex::install::InstallOutcome::AlreadyPresent);
+    }
+    root["mcpServers"]["context-firewall"] = server_config;
+    if !dry_run {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("could not create {}", parent.display()))?;
+        }
+        std::fs::write(path, serde_json::to_vec_pretty(&root)?)
+            .with_context(|| format!("could not write {}", path.display()))?;
+    }
+    Ok(cfw_codex::install::InstallOutcome::Written)
+}
+
+fn write_agent_block(path: &Path, dry_run: bool) -> Result<cfw_codex::install::InstallOutcome> {
+    if dry_run {
+        return cfw_codex::install::inspect_wrapper_snippet(path);
+    }
+    cfw_codex::install::write_wrapper_snippet(path)
+}
+
+fn write_claude_import(path: &Path, dry_run: bool) -> Result<cfw_codex::install::InstallOutcome> {
+    const START: &str = "<!-- context-firewall:start -->";
+    const END: &str = "<!-- context-firewall:end -->";
+    let snippet = format!("{START}\n@AGENTS.md\n{END}\n");
+    write_managed_text(path, &snippet, START, END, dry_run)
+}
+
+fn write_cursor_rule(path: &Path, dry_run: bool) -> Result<cfw_codex::install::InstallOutcome> {
+    let snippet = r#"---
+alwaysApply: true
+---
+
+# Context Firewall
+
+Use Context Firewall for noisy terminal output.
+
+- Prefer `cfw_run` for tests, builds, git diffs, search results, file dumps,
+  generated files, browser snapshots, and logs.
+- Use `cfw_show` to retrieve exact span lines when needed.
+- Use `cfw_receipt` to inspect recent context savings.
+- Keep raw evidence on disk. Keep agent context clean.
+"#;
+    write_whole_file_if_changed(path, snippet, dry_run)
+}
+
+fn write_managed_text(
+    path: &Path,
+    snippet: &str,
+    start_marker: &str,
+    end_marker: &str,
+    dry_run: bool,
+) -> Result<cfw_codex::install::InstallOutcome> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not read {}", path.display()));
+        }
+    };
+    let next = if let (Some(start), Some(end)) =
+        (existing.find(start_marker), existing.find(end_marker))
+    {
+        let mut next = existing.clone();
+        next.replace_range(start..end + end_marker.len(), snippet.trim_end());
+        if !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next
+    } else {
+        let mut next = existing;
+        if !next.is_empty() && !next.ends_with('\n') {
+            next.push('\n');
+        }
+        if !next.is_empty() {
+            next.push('\n');
+        }
+        next.push_str(snippet);
+        next
+    };
+    if std::fs::read_to_string(path).ok().as_deref() == Some(next.as_str()) {
+        return Ok(cfw_codex::install::InstallOutcome::AlreadyPresent);
+    }
+    if !dry_run {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("could not create {}", parent.display()))?;
+        }
+        std::fs::write(path, next)
+            .with_context(|| format!("could not write {}", path.display()))?;
+    }
+    Ok(cfw_codex::install::InstallOutcome::Written)
+}
+
+fn write_whole_file_if_changed(
+    path: &Path,
+    content: &str,
+    dry_run: bool,
+) -> Result<cfw_codex::install::InstallOutcome> {
+    if std::fs::read_to_string(path).ok().as_deref() == Some(content) {
+        return Ok(cfw_codex::install::InstallOutcome::AlreadyPresent);
+    }
+    if !dry_run {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("could not create {}", parent.display()))?;
+        }
+        std::fs::write(path, content)
+            .with_context(|| format!("could not write {}", path.display()))?;
+    }
+    Ok(cfw_codex::install::InstallOutcome::Written)
 }
 
 fn run_command(args: RunArgs) -> Result<()> {
@@ -766,6 +1068,236 @@ fn receipt(args: ReceiptArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn mcp() -> Result<()> {
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line.context("could not read MCP stdin")?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(error) => {
+                write_mcp_message(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": {"code": -32700, "message": error.to_string()}
+                }))?;
+                continue;
+            }
+        };
+        if request.get("id").is_none() {
+            continue;
+        }
+        let id = request
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let response = match handle_mcp_request(&request) {
+            Ok(result) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
+            Err(error) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32603, "message": error.to_string()}
+            }),
+        };
+        write_mcp_message(response)?;
+    }
+    Ok(())
+}
+
+fn write_mcp_message(value: serde_json::Value) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    serde_json::to_writer(&mut stdout, &value)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn handle_mcp_request(request: &serde_json::Value) -> Result<serde_json::Value> {
+    let method = request
+        .get("method")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing MCP method"))?;
+    match method {
+        "initialize" => Ok(serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "context-firewall", "version": env!("CARGO_PKG_VERSION")}
+        })),
+        "ping" => Ok(serde_json::json!({})),
+        "tools/list" => Ok(serde_json::json!({"tools": mcp_tools()})),
+        "tools/call" => {
+            let params = request
+                .get("params")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            call_mcp_tool(&params)
+        }
+        _ => bail!("unknown MCP method: {method}"),
+    }
+}
+
+fn mcp_tools() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "name": "cfw_run",
+            "title": "Run command through Context Firewall",
+            "description": "Run a real local command, store full stdout/stderr locally, and return compact agent-friendly output.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Command argv, for example [\"cargo\", \"test\"]."
+                    },
+                    "kind": {"type": "string", "description": "Optional reducer kind."},
+                    "cwd": {"type": "string", "description": "Optional working directory."},
+                    "stdin_file": {"type": "string", "description": "Optional file to pass to stdin."}
+                },
+                "required": ["command"]
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_show",
+            "title": "Show stored raw span output",
+            "description": "Retrieve exact raw output, or exact line ranges, from a Context Firewall span.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "span_id": {"type": "string"},
+                    "lines": {"type": "string", "description": "Optional 1-based range A:B."},
+                    "force": {"type": "boolean", "description": "Bypass secret-like output guard."},
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                },
+                "required": ["span_id"]
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_spans",
+            "title": "List Context Firewall spans",
+            "description": "List recent Context Firewall spans from the local ledger.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum span count."},
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_receipt",
+            "title": "Show Context Firewall receipt",
+            "description": "Return recent token accounting and span summary as JSON.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                }
+            }
+        }),
+    ]
+}
+
+fn call_mcp_tool(params: &serde_json::Value) -> Result<serde_json::Value> {
+    let name = params
+        .get("name")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing tool name"))?;
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let cwd = args
+        .get("cwd")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from);
+
+    let argv = match name {
+        "cfw_run" => mcp_run_args(&args)?,
+        "cfw_show" => mcp_show_args(&args)?,
+        "cfw_spans" => {
+            let limit = args
+                .get("limit")
+                .and_then(|value| value.as_i64())
+                .unwrap_or(20);
+            vec![
+                "spans".to_string(),
+                "--json".to_string(),
+                "--limit".to_string(),
+                limit.to_string(),
+            ]
+        }
+        "cfw_receipt" => vec!["receipt".to_string(), "--json".to_string()],
+        _ => bail!("unknown Context Firewall tool: {name}"),
+    };
+    let (success, text) = run_cfw_child(&argv, cwd.as_deref())?;
+    Ok(serde_json::json!({
+        "content": [{"type": "text", "text": text}],
+        "isError": !success
+    }))
+}
+
+fn mcp_run_args(args: &serde_json::Value) -> Result<Vec<String>> {
+    let command = args
+        .get("command")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow::anyhow!("cfw_run requires command array"))?;
+    let mut argv = vec!["run".to_string()];
+    if let Some(kind) = args.get("kind").and_then(|value| value.as_str()) {
+        argv.extend(["--kind".to_string(), kind.to_string()]);
+    }
+    if let Some(stdin_file) = args.get("stdin_file").and_then(|value| value.as_str()) {
+        argv.extend(["--stdin-file".to_string(), stdin_file.to_string()]);
+    }
+    argv.push("--".to_string());
+    for item in command {
+        let Some(part) = item.as_str() else {
+            bail!("cfw_run command must contain only strings");
+        };
+        argv.push(part.to_string());
+    }
+    Ok(argv)
+}
+
+fn mcp_show_args(args: &serde_json::Value) -> Result<Vec<String>> {
+    let span_id = args
+        .get("span_id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("cfw_show requires span_id"))?;
+    let mut argv = vec!["show".to_string(), span_id.to_string()];
+    if let Some(lines) = args.get("lines").and_then(|value| value.as_str()) {
+        argv.extend(["--lines".to_string(), lines.to_string()]);
+    }
+    if args.get("force").and_then(|value| value.as_bool()) == Some(true) {
+        argv.push("--force".to_string());
+    }
+    Ok(argv)
+}
+
+fn run_cfw_child(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
+    let mut command = Command::new(std::env::current_exe().context("could not locate cfw binary")?);
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let output = command
+        .output()
+        .with_context(|| format!("could not run cfw {}", args.join(" ")))?;
+    let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.stderr.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n[stderr]\n");
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    Ok((output.status.success(), text))
 }
 
 fn policy(args: PolicyArgs) -> Result<()> {

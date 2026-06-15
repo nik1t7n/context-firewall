@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::io::Write;
 use tempfile::TempDir;
 
 #[test]
@@ -9,9 +10,7 @@ fn no_args_shows_launch_screen() {
         .success()
         .stdout(predicate::str::contains("Context Firewall"))
         .stdout(predicate::str::contains("cfw first-run"))
-        .stdout(predicate::str::contains(
-            "cfw install codex --mode wrapper --write-agents",
-        ));
+        .stdout(predicate::str::contains("cfw install agent"));
 }
 
 #[test]
@@ -571,9 +570,116 @@ fn install_codex_wrapper_prints_advisory_snippet() {
         .args(["install", "codex", "--mode", "wrapper"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("mode: wrapper"))
-        .stdout(predicate::str::contains("enforcement: advisory"))
+        .stdout(predicate::str::contains("target: codex"))
+        .stdout(predicate::str::contains("mcp: cfw mcp"))
         .stdout(predicate::str::contains("context-firewall:start"));
+}
+
+#[test]
+fn mcp_lists_context_firewall_tools() {
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("cfw"))
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cfw mcp");
+
+    {
+        let stdin = child.stdin.as_mut().expect("stdin");
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})
+        )
+        .expect("write initialize");
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
+        )
+        .expect("write tools/list");
+    }
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("mcp output");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let messages = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("json rpc"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages[0]["result"]["serverInfo"]["name"],
+        "context-firewall"
+    );
+    let tools = messages[1]["result"]["tools"].as_array().expect("tools");
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_run"));
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_show"));
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_receipt"));
+}
+
+#[test]
+fn install_agent_configs_for_gemini_claude_cursor_and_antigravity() {
+    let temp = TempDir::new().expect("temp dir");
+    let home = temp.path().join("home");
+    std::fs::create_dir_all(&home).expect("home");
+
+    for target in ["gemini", "claude", "cursor", "antigravity"] {
+        let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+        install
+            .current_dir(temp.path())
+            .env("HOME", &home)
+            .args(["install", target])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!("target: {target}")));
+    }
+
+    let gemini: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.path().join(".gemini/settings.json"))
+            .expect("gemini settings"),
+    )
+    .expect("gemini json");
+    assert_eq!(gemini["mcpServers"]["context-firewall"]["command"], "cfw");
+    assert_eq!(gemini["mcpServers"]["context-firewall"]["args"][0], "mcp");
+    let gemini_user: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".gemini/settings.json")).expect("gemini user settings"),
+    )
+    .expect("gemini user json");
+    assert_eq!(
+        gemini_user["mcpServers"]["context-firewall"]["command"],
+        "cfw"
+    );
+
+    let claude: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.path().join(".mcp.json")).expect("claude mcp"),
+    )
+    .expect("claude json");
+    assert_eq!(claude["mcpServers"]["context-firewall"]["type"], "stdio");
+    assert!(
+        std::fs::read_to_string(temp.path().join("CLAUDE.md"))
+            .expect("claude md")
+            .contains("@AGENTS.md")
+    );
+
+    let cursor: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.path().join(".cursor/mcp.json")).expect("cursor mcp"),
+    )
+    .expect("cursor json");
+    assert_eq!(cursor["mcpServers"]["context-firewall"]["command"], "cfw");
+    assert!(
+        temp.path()
+            .join(".cursor/rules/context-firewall.mdc")
+            .exists()
+    );
+
+    let agy: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".gemini/antigravity-cli/mcp_config.json"))
+            .expect("agy cli mcp"),
+    )
+    .expect("agy json");
+    assert_eq!(agy["mcpServers"]["context-firewall"]["command"], "cfw");
+    assert!(temp.path().join(".antigravity/mcp_config.json").exists());
 }
 
 #[test]

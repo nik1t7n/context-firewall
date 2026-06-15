@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+
+# Context Firewall
+
+Use Context Firewall for noisy terminal output.
+
+- Prefer `cfw_run` for tests, builds, git diffs, search results, file dumps,
+  generated files, browser snapshots, and logs.
+- Use `cfw_show` to retrieve exact span lines when needed.
+- Use `cfw_receipt` to inspect recent context savings.
+- Keep raw evidence on disk. Keep agent context clean.

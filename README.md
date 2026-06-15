@@ -2,219 +2,264 @@
 
 # Context Firewall
 
-**A local-first token firewall for coding agents.**
+### Stop wasting agent context on terminal noise.
 
-Keep logs, diffs, repeated output, generated files, and giant search results out of your agent's context while preserving the full evidence on disk.
+Context Firewall is a local-first context firewall for coding agents. It runs
+your real commands, gives the agent the compact signal, and keeps the full raw
+evidence on disk for when you need it.
 
 ![Rust 2024](https://img.shields.io/badge/Rust-2024-f74c00?style=for-the-badge)
-![Local First](https://img.shields.io/badge/local--first-evidence-2ea043?style=for-the-badge)
-![Codex Ready](https://img.shields.io/badge/Codex-wrapper--ready-111827?style=for-the-badge)
+![Local First](https://img.shields.io/badge/local--first-2ea043?style=for-the-badge)
+![Agent Ready](https://img.shields.io/badge/agent-ready-111827?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=for-the-badge)
 
-<p>
-  <code>cfw run -- cargo test</code><br>
-  <code>cfw run -- rg "TODO" .</code><br>
-  <code>cfw show &lt;span-id&gt; --lines 120:180</code>
-</p>
+<br />
+
+<strong>Less noise in context. More room for the work.</strong>
 
 </div>
 
-## Why This Exists
+---
 
-Coding agents are getting powerful, but they still burn context on boring output:
+## The Problem
 
-- 500 lines of test noise to find one assertion
-- huge `rg` results where only the file grouping matters
-- repeated commands that print the same thing again
-- giant JSON blobs where the shape matters more than the payload
-- lockfiles, generated files, build folders, and logs
+Coding agents are powerful until your context gets filled with junk:
 
-Context Firewall sits between the agent and the terminal. It runs the real command, stores the full output locally, and returns a compact version with a span handle for exact retrieval.
+- 500 lines of test output to find one failed assertion
+- giant `rg` results where only the file map matters
+- huge diffs pasted into the model again and again
+- logs, generated files, lockfiles, snapshots, and JSON blobs
+- repeated commands that say the same thing twice
 
-## Measured Impact
+Every wasted token competes with the code, plan, bug, or decision you actually
+needed the agent to understand.
 
-Measured locally on this repository with `cfw 0.1.0` in wrapper mode.
+Context Firewall puts a clean boundary between command output and agent context.
 
-| Real command | Raw estimated tokens | Returned estimated tokens | Reduction |
-| --- | ---: | ---: | ---: |
-| `rg -n 'Context Firewall\|Codex\|receipt\|span\|policy\|canary' docs crates` | 9,962 | 1,624 | 83.69% |
-| `sed -n '1,220p' docs/global-plan.md` | 1,610 | 1,124 | 30.18% |
-| `cargo test` | 1,298 | 1,001 | 22.88% |
-| Three-command local measurement | 12,870 | 3,749 | 70.87% |
+## What It Does
 
-Receipt from the same run:
-
-```json
-{
-  "spans": 3,
-  "raw_estimated_tokens": 12870,
-  "returned_estimated_tokens": 3749,
-  "net_estimated_saved": 9121
-}
+```text
+Your command
+    |
+    v
+cfw run -- cargo test
+    |
+    +-- stores full stdout/stderr locally
+    |
+    +-- returns the useful summary to the agent
+    |
+    +-- gives you a span handle for exact retrieval
 ```
 
-Every number above was produced by real CLI runs on this repo.
+The agent sees the signal. You keep the evidence.
 
-## The Loop
+## Quick Start
 
 ```bash
-# install from source
 cargo install --path crates/cfw-cli
 
-# open the launch screen
-cfw
+cfw install agent
+```
 
-# run noisy commands through the firewall
+Then run noisy commands through the firewall:
+
+```bash
 cfw run -- cargo test
 cfw run -- rg -n "TODO|FIXME" crates docs
 cfw run -- git diff
 cfw run -- cat app.log
-
-# inspect what happened
-cfw spans
-cfw receipt --json
-
-# pull exact raw evidence when you need it
-cfw show <span-id> --lines 120:180
 ```
 
-The agent sees compact output. You keep the raw artifact.
+Need the original output?
 
-## What the Agent Gets
+```bash
+cfw spans
+cfw show <span-id> --lines 120:180
+cfw receipt --json
+```
 
-Instead of dumping a full noisy result into context, Context Firewall returns the useful part plus a handle:
+## Agent Integrations
+
+Context Firewall speaks MCP and ships installers for the agent surfaces people
+actually use.
+
+```bash
+# Generic AGENTS.md instructions
+cfw install agent
+
+# Gemini CLI: .gemini/settings.json + GEMINI.md
+cfw install gemini
+
+# Google Antigravity: project config + local Antigravity MCP configs
+cfw install antigravity
+
+# Claude Code: .mcp.json + AGENTS.md + CLAUDE.md import
+cfw install claude
+
+# Cursor: .cursor/mcp.json + .cursor/rules/context-firewall.mdc + AGENTS.md
+cfw install cursor
+```
+
+All MCP clients connect to the same local server:
+
+```bash
+cfw mcp
+```
+
+Tools exposed over MCP:
+
+| Tool | Purpose |
+| --- | --- |
+| `cfw_run` | run a real command through Context Firewall |
+| `cfw_show` | retrieve exact stored span output |
+| `cfw_spans` | list recent spans |
+| `cfw_receipt` | inspect recent token accounting |
+
+## The Aha Moment
+
+Instead of feeding the agent a wall of output:
+
+```text
+docs/global-plan.md:...
+docs/comparison.md:...
+crates/cfw-cli/src/main.rs:...
+crates/cfw-cli/tests/cli.rs:...
+... hundreds of lines ...
+```
+
+Context Firewall returns the shape of the result:
 
 ```text
 [context-firewall: search summary]
-files matched: 18
-raw match lines: 457
+files matched: 19
+raw match lines: 499
+
+README.md
+  3:# Context Firewall
+  32:Context Firewall puts a clean boundary...
 
 crates/cfw-cli/src/main.rs
-  9:use cfw_core::receipt::{RECEIPT_SCHEMA_JSON, RECEIPT_SCHEMA_VERSION};
-  10:use cfw_core::span::{DeliveryStatus, SpanRecord};
+  10:use cfw_core::receipt::{...}
+  54:Run a guided local command...
 
 [context-firewall]
-span: cfw://span/019eb4cb697a76208ba7a71ff72b51d7
-raw: 39,848 bytes, estimated 9,962 tokens
-returned: 6,496 bytes, estimated 1,624 tokens
+span: cfw://span/019ecaf492c07370a55c6943fc98021b
+raw: 43,512 bytes, estimated 10,878 tokens
+returned: 6,870 bytes, estimated 1,718 tokens
 full output stored locally
 [/context-firewall]
 ```
 
-Need more? Ask for the exact lines:
+If the agent needs more, it asks for the exact span lines instead of rerunning
+the command or flooding the conversation.
 
-```bash
-cfw show 019eb4cb697a76208ba7a71ff72b51d7 --lines 120:180
+## Real Local Impact
+
+Measured on this repository with `cfw 0.1.0`.
+
+| Command | Raw estimated tokens | Returned estimated tokens | Reduction |
+| --- | ---: | ---: | ---: |
+| Repository search across docs, crates, and README | 10,878 | 1,718 | 84.21% |
+| `cargo test` | 1,319 | 999 | 24.26% |
+| Local two-command session | 12,197 | 2,717 | 77.72% |
+
+Receipt:
+
+```json
+{
+  "spans": 2,
+  "raw_estimated_tokens": 12197,
+  "returned_estimated_tokens": 2717,
+  "net_estimated_saved": 9480
+}
 ```
 
-## Codex Setup
+## Why Developers Use It
 
-Context Firewall is Codex-first.
+| Without Context Firewall | With Context Firewall |
+| --- | --- |
+| Agent context fills with command noise | Agent sees compact, task-relevant output |
+| Raw evidence disappears into scrollback | Raw evidence is stored locally |
+| Repeated commands waste more tokens | Duplicate output can collapse to a handle |
+| Big diffs and logs derail the turn | Summaries stay readable |
+| Debugging requires reruns | Exact lines are retrievable by span |
 
-```bash
-cfw install codex --mode wrapper --write-agents --dry-run
-cfw install codex --mode wrapper --write-agents
-cfw doctor codex
-```
+## Built For Coding Agents
 
-That adds a managed `AGENTS.md` block telling Codex when to use `cfw run -- ...`.
+Context Firewall is agent-facing infrastructure, not a log viewer.
 
-Hook-native mode is prepared behind a real output-replacement canary:
-
-```bash
-cfw canary codex-hook-replacement
-cfw install codex --mode hook-native
-```
-
-Wrapper mode is available today. Hook-native mode graduates when the canary verifies compact model-visible delivery on a supported Codex version.
-
-## Built For Trust
-
-Context Firewall keeps the core path solid:
-
-- real commands in, compact output out
-- raw stdout and stderr stored locally
-- deterministic reducers
-- span handles for exact evidence
-- SQLite ledger for receipts
-- policy gates for obvious context waste
-- repeat fingerprints for safe duplicate suppression
-- local lifecycle controls with `cfw purge`
-
-It is a local evidence layer with a compact delivery path.
+- MCP server for agent tools
+- Installers for Gemini CLI, Antigravity, Claude Code, Cursor, and generic agents
+- Real command execution
+- Local raw artifacts
+- Deterministic reducers
+- Span handles for exact evidence
+- Receipts for token accounting
+- Policy gates for obvious context waste
+- No cloud account
+- No hosted proxy
+- No raw output loss
 
 ## Reducers
 
-| Reducer | What it keeps |
+Context Firewall understands the noisy shapes agents hit every day:
+
+| Reducer | Keeps |
 | --- | --- |
-| `test-output` | test errors, panics, assertions, summaries, head, tail |
+| `test-output` | failures, panics, assertions, summaries, head, tail |
 | `git` | file headers, hunks, changed lines, conflict markers |
-| `search` | files matched, match counts, capped examples per file |
+| `search` | matched files, counts, capped examples per file |
 | `log` | severity lines, error context, head, tail |
 | `json` | object shape, collection sizes, scalar samples |
 | `outline` | headings, imports, declarations, package names |
 | `browser-snapshot` | roles, diagnostics, key accessible nodes |
 
-## Receipts
-
-Use receipts to see what Context Firewall did:
+## Common Workflow
 
 ```bash
+# run the real command
+cfw run -- cargo test
+
+# inspect recent spans
+cfw spans
+
+# retrieve exact evidence
+cfw show 019ecaf49aab746395d2e02d31fa5d76 --lines 40:90
+
+# see context savings
 cfw receipt
-cfw receipt --json
-cfw receipt --schema
 ```
 
-Receipts separate observed token waste from delivery-backed savings. Wrapper mode reports what it returned through `cfw run`; hook-native mode will report replacement-backed savings after the canary verifies that path.
-
-## Release Readiness
-
-The project already has:
-
-- GitHub Actions CI for `fmt`, tests, and clippy
-- cargo-dist release packaging
-- macOS Apple Silicon, macOS Intel, Linux x64, Linux ARM64, and Windows x64 artifacts
-- shell and PowerShell installers
-- Homebrew tap generation
-- GitHub Artifact Attestations
-- release smoke workflow that downloads the published artifact and runs the real binary
-
-Local release smoke:
+## Install For Development
 
 ```bash
 cargo build -p cfw
-scripts/release-smoke.sh target/debug/cfw
-```
-
-## Development
-
-```bash
-cargo fmt --check
 cargo test
 cargo clippy -- -D warnings
+```
+
+Release smoke:
+
+```bash
 scripts/release-smoke.sh target/debug/cfw
 ```
 
-Useful targeted tests:
+## Project Status
 
-```bash
-cargo test -p cfw --test cli repeated_identical_command_returns_duplicate_handle
-cargo test -p cfw --test cli changed_stdin_file_prevents_duplicate_handle_even_with_same_output
-cargo test -p cfw --test cli changed_cargo_lock_prevents_duplicate_handle_even_with_same_output
-cargo test -p cfw-reducers --test real_corpus
-```
+Context Firewall is early, useful, and intentionally small. It is built for the
+loop every coding agent lives in: read, search, test, diff, fix, repeat.
 
-## Roadmap
+The broader goal is simple:
 
-- Codex wrapper mode: available
-- Codex hook-native mode: canary-gated
-- Claude Code adapter: next
-- Gemini CLI, Cursor, OpenClaw, MCP: later
+> Give every coding agent a clean context boundary for terminal output.
 
-## More
+## Links
 
-- [Codex hook-native roadmap](docs/codex-hook-native-roadmap.md)
-- [Global build plan](docs/global-plan.md)
-- [Comparison with adjacent tools](docs/comparison.md)
+- [Comparison](docs/comparison.md)
 - [Security model](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
+- [Implementation notes](docs/implementation-plan.md)
+
+## License
+
+Apache-2.0

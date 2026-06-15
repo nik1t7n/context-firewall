@@ -10,15 +10,16 @@ pub fn wrapper_snippet() -> String {
         r#"{START_MARKER}
 ## Context Firewall
 
-Use `cfw run -- <command>` for commands likely to produce large output:
-test suites, build logs, git diffs, search results, file dumps, generated files,
-browser snapshots, and logs.
+Use Context Firewall for noisy terminal output.
 
-When Context Firewall returns a span handle like `cfw://span/<id>`, request exact
-lines with `cfw show <id> --lines A:B` instead of rerunning the command.
+- Prefer `cfw run -- <command>` for tests, builds, git diffs, search results,
+  file dumps, generated files, browser snapshots, and logs.
+- If MCP tools are available, prefer `cfw_run`, `cfw_show`, `cfw_spans`, and
+  `cfw_receipt`.
+- When Context Firewall returns a span handle like `cfw://span/<id>`, retrieve
+  exact lines with `cfw show <id> --lines A:B` instead of rerunning the command.
 
-Context Firewall wrapper mode is advisory. Hook-native replacement is not active
-until `cfw doctor codex` reports `hook_replacement_verified: true`.
+Keep raw evidence on disk. Keep agent context clean.
 {END_MARKER}
 "#
     )
@@ -32,8 +33,15 @@ pub fn write_wrapper_snippet(path: &Path) -> Result<InstallOutcome> {
         Err(err) => return Err(err).with_context(|| format!("could not read {}", path.display())),
     };
 
-    if marker_range(&existing)?.is_some() {
-        return Ok(InstallOutcome::AlreadyPresent);
+    if let Some(range) = marker_range(&existing)? {
+        if existing[range.clone()] == snippet {
+            return Ok(InstallOutcome::AlreadyPresent);
+        }
+        let mut next = existing;
+        next.replace_range(range, &snippet);
+        std::fs::write(path, next)
+            .with_context(|| format!("could not write {}", path.display()))?;
+        return Ok(InstallOutcome::Written);
     }
 
     let mut next = existing;
