@@ -56,6 +56,14 @@ The agent sees the signal. You keep the evidence.
 ## Quick Start
 
 ```bash
+# macOS / Linux, after the first tagged release
+brew install nomads-ai-lab/tap/cfw
+
+# npm / npx, after the first tagged release
+npm install -g @nomads-ai-lab/context-firewall
+npx @nomads-ai-lab/context-firewall --help
+
+# from this checkout today
 cargo install --path crates/cfw-cli
 
 cfw install agent
@@ -243,6 +251,9 @@ Release smoke:
 ```bash
 scripts/release-smoke.sh target/debug/cfw
 ```
+
+See [INSTALL.md](INSTALL.md) for Homebrew, npm/npx, shell installer,
+PowerShell, Rust, and release-owner setup.
 
 ## Project Status
 
