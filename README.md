@@ -8,8 +8,8 @@ Coding agents waste scarce context on terminal noise: logs, diffs, test output,
 and search results crowd out the code they need to understand.
 
 Context Firewall solves this by giving agents the compact signal and keeping
-raw evidence available for precise retrieval, saving up to 84% of context for
-useful work.
+raw evidence available for precise retrieval, saving up to 94.6% of noisy
+command context for useful work.
 
 ![Rust 2024](https://img.shields.io/badge/Rust-2024-f74c00?style=for-the-badge)
 ![Local First](https://img.shields.io/badge/local--first-2ea043?style=for-the-badge)
@@ -19,6 +19,9 @@ useful work.
 <br />
 
 <strong>Less noise in context. More room for the work.</strong>
+
+Real release audit: <strong>300k raw tokens became 16k agent-visible tokens</strong>
+while every full command output stayed retrievable on disk.
 
 </div>
 
@@ -185,25 +188,30 @@ full output stored locally
 If the agent needs more, it asks for the exact span lines instead of rerunning
 the command or flooding the conversation.
 
-## Real Local Impact
+## Outstanding In A Real Agent Run
 
-Measured on this repository with `cfw 0.1.0`.
+Measured on this repository with the public `cfw 0.1.0` release.
 
-| Command | Raw estimated tokens | Returned estimated tokens | Reduction |
-| --- | ---: | ---: | ---: |
-| Repository search across docs, crates, and README | 6,748 | 1,089 | 83.86% |
-| `cargo test` | 1,349 | 1,000 | 25.87% |
-| Local two-command session | 8,097 | 2,089 | 74.20% |
+The benchmark used the kind of noisy commands agents actually run during a
+release audit: repo-wide search, a full release patch, `cargo metadata`, source
+file dumps, workspace tests, clippy, and GitHub Actions job JSON.
 
-Receipt:
+| Run | Raw estimated tokens | Agent-visible tokens | Saved | Reduction |
+| --- | ---: | ---: | ---: | ---: |
+| Direct CFW benchmark | 300,794 | 16,448 | 284,346 | 94.53% |
+| Codex CLI agent | 300,156 | 16,073 | 284,083 | 94.65% |
+| Gemini CLI agent | 300,191 | 16,097 | 284,094 | 94.64% |
 
-```json
-{
-  "spans": 2,
-  "raw_estimated_tokens": 8097,
-  "returned_estimated_tokens": 2089,
-  "net_estimated_saved": 6008
-}
+That is the point: the agent keeps the compact signal in context, and the full
+raw stdout/stderr stays on disk for exact `cfw show <span-id>` retrieval.
+
+One standout span:
+
+```text
+cargo metadata --format-version 1 --all-features
+raw:      160,887 estimated tokens
+returned:   5,617 estimated tokens
+saved:    155,270 estimated tokens
 ```
 
 ## Why Developers Use It
