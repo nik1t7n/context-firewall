@@ -200,10 +200,12 @@ pub fn load_latest_verified(
     if !result.verified {
         return Ok(None);
     }
-    if let (Some(expected), Some(actual)) = (current_version, result.codex_version.as_deref())
-        && expected != actual
-    {
+    let Some(expected) = current_version else {
         return Ok(None);
+    };
+    match result.codex_version.as_deref() {
+        Some(actual) if actual == expected => {}
+        _ => return Ok(None),
     }
     Ok(Some(result))
 }
