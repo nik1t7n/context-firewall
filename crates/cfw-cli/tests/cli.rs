@@ -991,11 +991,13 @@ fn learn_suggests_rules_from_repeated_failed_commands() {
 #[test]
 fn session_reducers_reports_quality_stats() {
     let temp = TempDir::new().expect("temp dir");
+    let work = TempDir::new().expect("work dir");
 
     let mut first_test = Command::cargo_bin("cfw").expect("cfw binary");
     let output = first_test
         .env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "quality-session")
+        .current_dir(work.path())
         .args([
             "run",
             "--kind",
@@ -1020,6 +1022,7 @@ fn session_reducers_reports_quality_stats() {
     second_test
         .env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "quality-session")
+        .current_dir(work.path())
         .args([
             "run",
             "--kind",
@@ -1035,6 +1038,7 @@ fn session_reducers_reports_quality_stats() {
     let mut show = Command::cargo_bin("cfw").expect("cfw binary");
     show.env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "quality-session")
+        .current_dir(work.path())
         .args(["show", span_id])
         .assert()
         .success();
@@ -1043,6 +1047,7 @@ fn session_reducers_reports_quality_stats() {
     generic_failure
         .env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "quality-session")
+        .current_dir(work.path())
         .args([
             "run",
             "--kind",
@@ -1059,6 +1064,7 @@ fn session_reducers_reports_quality_stats() {
     generic_signal
         .env("CFW_DATA_DIR", temp.path())
         .env("CFW_SESSION", "quality-session")
+        .current_dir(work.path())
         .args(["run", "--kind", "generic", "--", "sh", "-c", "kill -9 $$"])
         .assert()
         .failure();
@@ -1066,6 +1072,7 @@ fn session_reducers_reports_quality_stats() {
     let mut session = Command::cargo_bin("cfw").expect("cfw binary");
     session
         .env("CFW_DATA_DIR", temp.path())
+        .current_dir(work.path())
         .args(["session", "--reducers"])
         .assert()
         .success()
