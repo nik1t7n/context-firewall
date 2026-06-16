@@ -451,20 +451,50 @@ fn uninstall(args: UninstallArgs) -> Result<()> {
         );
     }
 
-    let outcome = cfw_codex::install::uninstall_wrapper_snippet(&args.agents_path)?;
+    let cwd = std::env::current_dir().context("could not read current directory")?;
+    let agents_outcome = cfw_codex::install::uninstall_wrapper_snippet(&args.agents_path)?;
+    let hook_outcome = cfw_codex::install::uninstall_hook_native(&cwd)?;
     println!("Context Firewall Codex adapter");
-    println!("  mode: wrapper");
+    println!("  mode: managed");
     println!("  agents_path: {}", args.agents_path.display());
-    println!("  result: {:?}", outcome);
+    println!("  result: {:?}", agents_outcome);
+    let hook_paths = cfw_codex::install::hook_native_paths(&cwd);
+    println!("  hooks_path: {}", hook_paths.hooks_json_path.display());
+    println!("  hook_result: {:?}", hook_outcome);
     Ok(())
 }
 
 fn install_codex(args: InstallArgs) -> Result<()> {
     match args.mode {
         InstallMode::HookNative => {
-            bail!(
-                "HookReplacementFailed: direct output replacement is not enabled by this installer. Use `cfw install codex --mode wrapper`."
-            )
+            let cwd = std::env::current_dir().context("could not read current directory")?;
+            let hook_paths = cfw_codex::install::hook_native_paths(&cwd);
+            let hook_outcome = if args.dry_run {
+                cfw_codex::install::preview_install_hook_native(&cwd)?
+            } else {
+                cfw_codex::install::install_hook_native(&cwd)?
+            };
+            println!("Context Firewall agent adapter");
+            println!("  target: codex");
+            println!("  mode: hook-native");
+            println!("  mcp: cfw mcp");
+            println!("  hooks_path: {}", hook_paths.hooks_json_path.display());
+            println!(
+                "  hook_script_path: {}",
+                hook_paths.hook_script_path.display()
+            );
+            println!("  dry_run: {}", args.dry_run);
+            println!("  hook_result: {:?}", hook_outcome);
+            if args.write_agents {
+                let agents_outcome = if args.dry_run {
+                    cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?
+                } else {
+                    cfw_codex::install::write_wrapper_snippet(&args.agents_path)?
+                };
+                println!("  agents_path: {}", args.agents_path.display());
+                println!("  agents_result: {:?}", agents_outcome);
+            }
+            Ok(())
         }
         InstallMode::Wrapper => {
             println!("Context Firewall agent adapter");
@@ -2844,6 +2874,11 @@ fn doctor(args: DoctorArgs) -> Result<()> {
         let evidence_path = codex_canary_evidence_path(&paths);
         let verified =
             cfw_codex::canary::load_latest_verified(&evidence_path, codex.version.as_deref())?;
+        let cwd = std::env::current_dir().context("could not read current directory")?;
+        let hook_native_installed = matches!(
+            cfw_codex::install::inspect_hook_native(&cwd)?,
+            cfw_codex::install::InstallOutcome::AlreadyPresent
+        );
         if verified.is_some() {
             codex.hook_replacement_verified = true;
         }
@@ -2855,16 +2890,25 @@ fn doctor(args: DoctorArgs) -> Result<()> {
         );
         println!("  guidance_path: {}", args.agents_path.display());
         println!("  guidance_installed: {}", guidance_installed);
+        println!("  auto_rewrite_installed: {}", hook_native_installed);
         println!(
             "  hook_replacement_verified: {}",
             codex.hook_replacement_verified
         );
         if !codex.hook_replacement_verified {
-            println!("  auto_rewrite_status: unavailable");
-            println!(
-                "  auto_rewrite_reason: direct output replacement has not been verified in this environment"
-            );
-            println!("  mode: wrapper/observer only");
+            if hook_native_installed {
+                println!("  auto_rewrite_status: installed_unverified");
+                println!(
+                    "  auto_rewrite_reason: Codex PreToolUse hook is installed, but no verified canary was found for this Codex version"
+                );
+                println!("  mode: hook-native installed");
+            } else {
+                println!("  auto_rewrite_status: unavailable");
+                println!(
+                    "  auto_rewrite_reason: direct output replacement has not been verified in this environment"
+                );
+                println!("  mode: wrapper/observer only");
+            }
         } else {
             println!("  auto_rewrite_status: verified");
             println!("  mode: hook-native eligible");

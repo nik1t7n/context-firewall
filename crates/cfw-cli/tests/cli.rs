@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::io::Write;
+use std::process::{Command as StdCommand, Stdio};
 use tempfile::TempDir;
 
 #[test]
@@ -1175,6 +1176,7 @@ fn doctor_reports_installed_codex_guidance_separately_from_auto_rewrite() {
         .assert()
         .success()
         .stdout(predicate::str::contains("guidance_installed: true"))
+        .stdout(predicate::str::contains("auto_rewrite_installed: false"))
         .stdout(predicate::str::contains("hook_replacement_verified: false"))
         .stdout(predicate::str::contains("auto_rewrite_status: unavailable"));
 }
@@ -1218,6 +1220,7 @@ fn doctor_ignores_verified_codex_canary_when_current_codex_is_missing() {
         .assert()
         .success()
         .stdout(predicate::str::contains("found: false"))
+        .stdout(predicate::str::contains("auto_rewrite_installed: false"))
         .stdout(predicate::str::contains("hook_replacement_verified: false"))
         .stdout(predicate::str::contains("auto_rewrite_status: unavailable"));
 }
@@ -1303,13 +1306,252 @@ fn uninstall_codex_wrapper_removes_only_managed_agents_block() {
 }
 
 #[test]
-fn install_codex_hook_native_is_explicitly_blocked() {
+fn install_codex_hook_native_writes_managed_hook_and_rewrites_bash() {
+    let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
+
+    let mut first = Command::cargo_bin("cfw").expect("cfw binary");
+    first
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "hook-native",
+            "--write-agents",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook_result: Written"))
+        .stdout(predicate::str::contains("agents_result: Written"));
+
+    let hooks_json = temp.path().join(".codex/hooks.json");
+    let hook_script = temp
+        .path()
+        .join(".codex/hooks/context_firewall_pre_tool_use.py");
+    assert!(hooks_json.exists());
+    assert!(hook_script.exists());
+
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "git diff -- crates/cfw-cli/src/main.rs"
+        }
+    });
+    let mut rewrite = StdCommand::new("python3")
+        .arg(&hook_script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn hook");
+    rewrite
+        .stdin
+        .as_mut()
+        .expect("hook stdin")
+        .write_all(payload.to_string().as_bytes())
+        .expect("write hook payload");
+    let output = rewrite.wait_with_output().expect("hook output");
+    assert!(output.status.success());
+    let rewritten: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("hook rewrite json");
+    assert_eq!(
+        rewritten["hookSpecificOutput"]["updatedInput"]["command"],
+        "cfw run --kind git -- git diff -- crates/cfw-cli/src/main.rs"
+    );
+
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "cfw run -- git diff"
+        }
+    });
+    let mut passthrough = StdCommand::new("python3")
+        .arg(&hook_script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn hook passthrough");
+    passthrough
+        .stdin
+        .as_mut()
+        .expect("hook stdin")
+        .write_all(payload.to_string().as_bytes())
+        .expect("write hook payload");
+    let output = passthrough.wait_with_output().expect("hook passthrough");
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+
+    let mut second = Command::cargo_bin("cfw").expect("cfw binary");
+    second
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "hook-native",
+            "--write-agents",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook_result: AlreadyPresent"))
+        .stdout(predicate::str::contains("agents_result: AlreadyPresent"));
+
+    let mut doctor = Command::cargo_bin("cfw").expect("cfw binary");
+    doctor
+        .env("CFW_DATA_DIR", temp.path())
+        .current_dir(temp.path())
+        .args([
+            "doctor",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("guidance_installed: true"))
+        .stdout(predicate::str::contains("auto_rewrite_installed: true"))
+        .stdout(predicate::str::contains(
+            "auto_rewrite_status: installed_unverified",
+        ));
+
+    let mut uninstall = Command::cargo_bin("cfw").expect("cfw binary");
+    uninstall
+        .current_dir(temp.path())
+        .args([
+            "uninstall",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook_result: Removed"));
+
+    assert!(!hooks_json.exists());
+    assert!(!hook_script.exists());
+}
+
+#[test]
+fn install_codex_hook_native_refuses_unmanaged_hooks_json() {
+    let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
+    std::fs::create_dir_all(temp.path().join(".codex")).expect("codex dir");
+    std::fs::write(&agents, "# Project Rules\n").expect("agents");
+    std::fs::write(temp.path().join(".codex/hooks.json"), "{}\n").expect("hooks json");
+
     let mut install = Command::cargo_bin("cfw").expect("cfw binary");
     install
+        .current_dir(temp.path())
         .args(["install", "codex", "--mode", "hook-native"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("HookReplacementFailed"));
+        .stderr(predicate::str::contains("HookNativeInstallConflict"));
+
+    let mut dry_run = Command::cargo_bin("cfw").expect("cfw binary");
+    dry_run
+        .current_dir(temp.path())
+        .args(["install", "codex", "--mode", "hook-native", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("HookNativeInstallConflict"));
+
+    let mut doctor = Command::cargo_bin("cfw").expect("cfw binary");
+    doctor
+        .env("CFW_DATA_DIR", temp.path())
+        .current_dir(temp.path())
+        .args([
+            "doctor",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("auto_rewrite_installed: false"));
+
+    let mut uninstall = Command::cargo_bin("cfw").expect("cfw binary");
+    uninstall
+        .current_dir(temp.path())
+        .args([
+            "uninstall",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook_result: AlreadyAbsent"));
+
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join(".codex/hooks.json")).expect("hooks json"),
+        "{}\n"
+    );
+}
+
+#[test]
+fn install_codex_hook_native_refuses_modified_managed_script() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+    install
+        .current_dir(temp.path())
+        .args(["install", "codex", "--mode", "hook-native"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hook_result: Written"));
+
+    let hooks_json = temp.path().join(".codex/hooks.json");
+    let hook_script = temp
+        .path()
+        .join(".codex/hooks/context_firewall_pre_tool_use.py");
+    let original_hooks = std::fs::read_to_string(&hooks_json).expect("hooks json");
+    std::fs::write(&hook_script, "# user edited script\n").expect("modify hook script");
+
+    let mut reinstall = Command::cargo_bin("cfw").expect("cfw binary");
+    reinstall
+        .current_dir(temp.path())
+        .args(["install", "codex", "--mode", "hook-native"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("HookNativeInstallConflict"));
+    assert_eq!(
+        std::fs::read_to_string(&hook_script).expect("hook script"),
+        "# user edited script\n"
+    );
+
+    let mut dry_run = Command::cargo_bin("cfw").expect("cfw binary");
+    dry_run
+        .current_dir(temp.path())
+        .args(["install", "codex", "--mode", "hook-native", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("HookNativeInstallConflict"));
+    assert_eq!(
+        std::fs::read_to_string(&hook_script).expect("hook script"),
+        "# user edited script\n"
+    );
+
+    let mut uninstall = Command::cargo_bin("cfw").expect("cfw binary");
+    uninstall
+        .current_dir(temp.path())
+        .args(["uninstall", "codex"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("HookNativeUninstallConflict"));
+    assert_eq!(
+        std::fs::read_to_string(&hooks_json).expect("hooks json"),
+        original_hooks
+    );
+    assert_eq!(
+        std::fs::read_to_string(&hook_script).expect("hook script"),
+        "# user edited script\n"
+    );
 }
 
 #[test]
