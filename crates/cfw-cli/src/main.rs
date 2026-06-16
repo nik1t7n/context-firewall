@@ -215,6 +215,10 @@ struct DoctorArgs {
     /// Include Codex-specific checks.
     #[arg(value_name = "TARGET")]
     target: Option<String>,
+
+    /// Path to the Codex AGENTS.md guidance file to inspect.
+    #[arg(long, default_value = "AGENTS.md")]
+    agents_path: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -2470,6 +2474,10 @@ fn doctor(args: DoctorArgs) -> Result<()> {
 
     if args.target.as_deref() == Some("codex") {
         let mut codex = cfw_codex::doctor::check();
+        let guidance_installed = matches!(
+            cfw_codex::install::inspect_wrapper_snippet(&args.agents_path)?,
+            cfw_codex::install::InstallOutcome::AlreadyPresent
+        );
         let evidence_path = codex_canary_evidence_path(&paths);
         let verified =
             cfw_codex::canary::load_latest_verified(&evidence_path, codex.version.as_deref())?;
@@ -2482,13 +2490,20 @@ fn doctor(args: DoctorArgs) -> Result<()> {
             "  version: {}",
             codex.version.unwrap_or_else(|| "unknown".to_string())
         );
+        println!("  guidance_path: {}", args.agents_path.display());
+        println!("  guidance_installed: {}", guidance_installed);
         println!(
             "  hook_replacement_verified: {}",
             codex.hook_replacement_verified
         );
         if !codex.hook_replacement_verified {
-            println!("  mode: wrapper/observer only until output-replacement canary passes");
+            println!("  auto_rewrite_status: unavailable");
+            println!(
+                "  auto_rewrite_reason: direct output replacement has not been verified in this environment"
+            );
+            println!("  mode: wrapper/observer only");
         } else {
+            println!("  auto_rewrite_status: verified");
             println!("  mode: hook-native eligible");
             println!("  evidence_path: {}", evidence_path.display());
         }

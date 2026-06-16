@@ -708,14 +708,23 @@ fn repeated_tiny_output_is_not_deduped_when_receipt_would_be_larger() {
 #[test]
 fn doctor_reports_codex_without_claiming_hook_replacement() {
     let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
 
     let mut doctor = Command::cargo_bin("cfw").expect("cfw binary");
     doctor
         .env("CFW_DATA_DIR", temp.path())
-        .args(["doctor", "codex"])
+        .current_dir(temp.path())
+        .args([
+            "doctor",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("hook_replacement_verified: false"));
+        .stdout(predicate::str::contains("guidance_installed: false"))
+        .stdout(predicate::str::contains("hook_replacement_verified: false"))
+        .stdout(predicate::str::contains("auto_rewrite_status: unavailable"));
 }
 
 #[test]
@@ -961,6 +970,87 @@ fn install_codex_wrapper_writes_agents_block_idempotently() {
 
     let content = std::fs::read_to_string(agents).expect("agents content");
     assert_eq!(content.matches("context-firewall:start").count(), 1);
+}
+
+#[test]
+fn doctor_reports_installed_codex_guidance_separately_from_auto_rewrite() {
+    let temp = TempDir::new().expect("temp dir");
+    let agents = temp.path().join("AGENTS.md");
+
+    let mut install = Command::cargo_bin("cfw").expect("cfw binary");
+    install
+        .env("CFW_DATA_DIR", temp.path())
+        .current_dir(temp.path())
+        .args([
+            "install",
+            "codex",
+            "--mode",
+            "wrapper",
+            "--write-agents",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success();
+
+    let mut doctor = Command::cargo_bin("cfw").expect("cfw binary");
+    doctor
+        .env("CFW_DATA_DIR", temp.path())
+        .current_dir(temp.path())
+        .args([
+            "doctor",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("guidance_installed: true"))
+        .stdout(predicate::str::contains("hook_replacement_verified: false"))
+        .stdout(predicate::str::contains("auto_rewrite_status: unavailable"));
+}
+
+#[test]
+fn doctor_ignores_verified_codex_canary_when_current_codex_is_missing() {
+    let temp = TempDir::new().expect("temp dir");
+    let empty_path = TempDir::new().expect("empty path");
+    let agents = temp.path().join("AGENTS.md");
+    let evidence = serde_json::json!({
+        "verified": true,
+        "reason": "verified by old environment",
+        "canary_id": "stale-canary",
+        "codex_version": "codex-cli stale",
+        "raw_marker": "raw",
+        "compact_marker": "compact",
+        "workspace_path": "/tmp/stale",
+        "events_path": "/tmp/stale/events.jsonl",
+        "stderr_path": "/tmp/stale/stderr.txt",
+        "last_message_path": "/tmp/stale/last-message.json",
+        "hook_input_path": "/tmp/stale/hook-input.json",
+        "hook_output_path": "/tmp/stale/hook-output.json"
+    });
+    std::fs::write(
+        temp.path().join("codex-hook-canary.json"),
+        serde_json::to_vec_pretty(&evidence).expect("evidence json"),
+    )
+    .expect("write evidence");
+
+    let mut doctor = Command::cargo_bin("cfw").expect("cfw binary");
+    doctor
+        .env("CFW_DATA_DIR", temp.path())
+        .env("PATH", empty_path.path())
+        .current_dir(temp.path())
+        .args([
+            "doctor",
+            "codex",
+            "--agents-path",
+            agents.to_str().expect("utf8 path"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("found: false"))
+        .stdout(predicate::str::contains("hook_replacement_verified: false"))
+        .stdout(predicate::str::contains("auto_rewrite_status: unavailable"));
 }
 
 #[test]
