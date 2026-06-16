@@ -15,6 +15,7 @@ use cfw_store::sqlite::Store;
 use chrono::{Duration, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use regex::Regex;
+use toml::Value as TomlValue;
 
 const POLICY_ENGINE_VERSION: &str = "cfw-policy-v1";
 const REPEAT_FINGERPRINT_SCHEMA_VERSION: &str = "cfw.repeat_fingerprint.v1";
@@ -763,6 +764,230 @@ fn write_whole_file_if_changed(
     Ok(cfw_codex::install::InstallOutcome::Written)
 }
 
+#[derive(Debug)]
+struct DslReducer {
+    name: String,
+    match_command: Regex,
+    strip_lines_matching: Vec<Regex>,
+    keep_lines_matching: Vec<Regex>,
+    max_lines: Option<usize>,
+    tail_lines: Option<usize>,
+    on_empty: Option<String>,
+}
+
+impl DslReducer {
+    fn reduce(&self, input: &str) -> cfw_reducers::Reduction {
+        let original_len = input.lines().count();
+        let mut lines = input.lines().collect::<Vec<_>>();
+
+        if !self.strip_lines_matching.is_empty() {
+            lines.retain(|line| {
+                !self
+                    .strip_lines_matching
+                    .iter()
+                    .any(|regex| regex.is_match(line))
+            });
+        }
+        if !self.keep_lines_matching.is_empty() {
+            lines.retain(|line| {
+                self.keep_lines_matching
+                    .iter()
+                    .any(|regex| regex.is_match(line))
+            });
+        }
+        if let Some(tail_lines) = self.tail_lines
+            && lines.len() > tail_lines
+        {
+            lines = lines[lines.len() - tail_lines..].to_vec();
+        }
+        if let Some(max_lines) = self.max_lines {
+            lines.truncate(max_lines);
+        }
+
+        let mut output = if lines.is_empty() {
+            self.on_empty.clone().unwrap_or_default()
+        } else {
+            lines.join("\n")
+        };
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+
+        cfw_reducers::Reduction {
+            reducer: format!("dsl:{}", self.name),
+            output,
+            omitted: lines.len() < original_len,
+            notes: vec!["applied project/user TOML line reducer".to_string()],
+        }
+    }
+}
+
+fn load_dsl_reducer(paths: &StorePaths, command: &str) -> Result<Option<DslReducer>> {
+    for path in [
+        PathBuf::from(".cfw/reducers.toml"),
+        paths.data_dir.join("reducers.toml"),
+    ] {
+        if let Some(reducer) = load_matching_dsl_reducer(&path, command)? {
+            return Ok(Some(reducer));
+        }
+    }
+    Ok(None)
+}
+
+fn load_matching_dsl_reducer(path: &Path, command: &str) -> Result<Option<DslReducer>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not read {}", path.display()));
+        }
+    };
+    let root = toml::from_str::<TomlValue>(&content)
+        .with_context(|| format!("invalid TOML in {}", path.display()))?;
+    let Some(reducers) = root.get("reducers") else {
+        bail!("{} must contain [[reducers]] entries", path.display());
+    };
+    let reducers = reducers
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("{} `reducers` must be an array", path.display()))?;
+
+    for (idx, reducer) in reducers.iter().enumerate() {
+        let reducer = parse_dsl_reducer(path, idx, reducer)?;
+        if reducer.match_command.is_match(command) {
+            return Ok(Some(reducer));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_dsl_reducer(path: &Path, idx: usize, value: &TomlValue) -> Result<DslReducer> {
+    const ALLOWED: &[&str] = &[
+        "name",
+        "match_command",
+        "strip_lines_matching",
+        "keep_lines_matching",
+        "max_lines",
+        "tail_lines",
+        "on_empty",
+    ];
+    let table = value.as_table().ok_or_else(|| {
+        anyhow::anyhow!("{} reducer #{} must be a table", path.display(), idx + 1)
+    })?;
+    for key in table.keys() {
+        if !ALLOWED.contains(&key.as_str()) {
+            bail!(
+                "{} reducer #{} has unknown field `{key}`",
+                path.display(),
+                idx + 1
+            );
+        }
+    }
+
+    let name = dsl_string(table, "name")?.unwrap_or_else(|| format!("reducer-{}", idx + 1));
+    let match_command = required_regex(path, &name, table, "match_command")?;
+    let strip_lines_matching = regex_list(path, &name, idx, table, "strip_lines_matching")?;
+    let keep_lines_matching = regex_list(path, &name, idx, table, "keep_lines_matching")?;
+    Ok(DslReducer {
+        name,
+        match_command,
+        strip_lines_matching,
+        keep_lines_matching,
+        max_lines: dsl_usize(path, idx, table, "max_lines")?,
+        tail_lines: dsl_usize(path, idx, table, "tail_lines")?,
+        on_empty: dsl_string(table, "on_empty")?,
+    })
+}
+
+fn required_regex(
+    path: &Path,
+    name: &str,
+    table: &toml::map::Map<String, TomlValue>,
+    key: &str,
+) -> Result<Regex> {
+    let pattern = dsl_string(table, key)?
+        .ok_or_else(|| anyhow::anyhow!("{} reducer `{name}` missing `{key}`", path.display()))?;
+    Regex::new(&pattern).with_context(|| {
+        format!(
+            "{} reducer `{name}` has invalid `{key}` regex",
+            path.display()
+        )
+    })
+}
+
+fn regex_list(
+    path: &Path,
+    name: &str,
+    idx: usize,
+    table: &toml::map::Map<String, TomlValue>,
+    key: &str,
+) -> Result<Vec<Regex>> {
+    let Some(value) = table.get(key) else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_array().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} reducer #{} `{key}` must be an array",
+            path.display(),
+            idx + 1
+        )
+    })?;
+    let mut regexes = Vec::new();
+    for value in values {
+        let pattern = value.as_str().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} reducer `{name}` `{key}` entries must be strings",
+                path.display(),
+            )
+        })?;
+        regexes.push(Regex::new(pattern).with_context(|| {
+            format!(
+                "{} reducer `{name}` has invalid `{key}` regex",
+                path.display(),
+            )
+        })?);
+    }
+    Ok(regexes)
+}
+
+fn dsl_string(table: &toml::map::Map<String, TomlValue>, key: &str) -> Result<Option<String>> {
+    table
+        .get(key)
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| anyhow::anyhow!("`{key}` must be a string"))
+        })
+        .transpose()
+}
+
+fn dsl_usize(
+    path: &Path,
+    idx: usize,
+    table: &toml::map::Map<String, TomlValue>,
+    key: &str,
+) -> Result<Option<usize>> {
+    table
+        .get(key)
+        .map(|value| {
+            let value = value.as_integer().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} reducer #{} `{key}` must be an integer",
+                    path.display(),
+                    idx + 1
+                )
+            })?;
+            usize::try_from(value).map_err(|_| {
+                anyhow::anyhow!(
+                    "{} reducer #{} `{key}` must be >= 0",
+                    path.display(),
+                    idx + 1
+                )
+            })
+        })
+        .transpose()
+}
+
 fn run_command(args: RunArgs) -> Result<()> {
     let Some((program, rest)) = args.command.split_first() else {
         bail!("CfwExecutionError: missing command");
@@ -849,8 +1074,17 @@ fn run_command(args: RunArgs) -> Result<()> {
         format!("{stdout}\n[stderr]\n{stderr}")
     };
     let reducer_kind = choose_reducer_kind(&args.kind, decision.reason_code);
-    let mut reduction = cfw_reducers::reduce(reducer_kind, &raw);
-    let span_kind = reducer_kind.to_string();
+    let dsl_reducer = if args.kind == "generic" && reducer_kind == "generic" {
+        load_dsl_reducer(&paths, &command_text)?
+    } else {
+        None
+    };
+    let mut reduction = if let Some(reducer) = dsl_reducer.as_ref() {
+        reducer.reduce(&raw)
+    } else {
+        cfw_reducers::reduce(reducer_kind, &raw)
+    };
+    let span_kind = reduction.reducer.clone();
     let raw_estimate = estimate_tokens(&raw);
 
     let store = Store::open(&paths)?;
