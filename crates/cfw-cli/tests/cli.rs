@@ -105,12 +105,57 @@ fn run_receipt_and_show_use_real_artifacts() {
         .success()
         .stdout(predicate::str::contains("\"session_id\": \"test-session\""));
 
+    let mut gain = Command::cargo_bin("cfw").expect("cfw binary");
+    gain.env("CFW_DATA_DIR", temp.path())
+        .arg("gain")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Gain"))
+        .stdout(predicate::str::contains("saved estimated tokens"));
+
+    let mut discover = Command::cargo_bin("cfw").expect("cfw binary");
+    discover
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("discover")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Discover"))
+        .stdout(predicate::str::contains("largest raw outputs"))
+        .stdout(predicate::str::contains("repeated passthrough"));
+
+    let mut session = Command::cargo_bin("cfw").expect("cfw binary");
+    session
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("session")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Session"))
+        .stdout(predicate::str::contains("cfw-routed commands: 1"));
+
     let mut show = Command::cargo_bin("cfw").expect("cfw binary");
     show.env("CFW_DATA_DIR", temp.path())
         .args(["show", &span_id, "--lines", "1:1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("1: alpha"));
+
+    let mut grep_show = Command::cargo_bin("cfw").expect("cfw binary");
+    grep_show
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["show", &span_id, "--grep", "beta", "--around", "1"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1: alpha"))
+        .stdout(predicate::str::contains("2: beta"));
+
+    let mut search_spans = Command::cargo_bin("cfw").expect("cfw binary");
+    search_spans
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["search-spans", "beta"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&span_id))
+        .stdout(predicate::str::contains("2: beta"));
 }
 
 #[test]

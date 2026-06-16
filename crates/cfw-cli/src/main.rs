@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -58,6 +58,8 @@ enum Commands {
     Compact(CompactArgs),
     /// Show raw artifact output for a span.
     Show(ShowArgs),
+    /// Search stored raw span output.
+    SearchSpans(SearchSpansArgs),
     /// List recent spans from the local ledger.
     Spans(SpansArgs),
     /// Print a local receipt from recent spans.
@@ -68,6 +70,12 @@ enum Commands {
     Policy(PolicyArgs),
     /// Show the largest recent context burners.
     Top(TopArgs),
+    /// Show local token savings from recent spans.
+    Gain(AnalyticsArgs),
+    /// Show commands that need better Context Firewall coverage.
+    Discover(AnalyticsArgs),
+    /// Show recent Context Firewall session adoption and reducer mix.
+    Session(AnalyticsArgs),
     /// Check local Context Firewall and Codex integration health.
     Doctor(DoctorArgs),
     /// Run real integration canaries.
@@ -152,6 +160,28 @@ struct ShowArgs {
     #[arg(long)]
     lines: Option<String>,
 
+    /// Plain-text pattern to search in the stored raw artifact.
+    #[arg(long)]
+    grep: Option<String>,
+
+    /// Include this many surrounding lines for --grep matches.
+    #[arg(long, default_value_t = 0)]
+    around: usize,
+
+    /// Bypass secret-like output guard.
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Args)]
+struct SearchSpansArgs {
+    /// Plain-text pattern to search in recent raw artifacts.
+    pattern: String,
+
+    /// Number of recent spans to inspect.
+    #[arg(long, default_value_t = 50)]
+    limit: i64,
+
     /// Bypass secret-like output guard.
     #[arg(long)]
     force: bool,
@@ -220,6 +250,13 @@ struct TopArgs {
 }
 
 #[derive(Debug, Args)]
+struct AnalyticsArgs {
+    /// Number of recent spans to inspect.
+    #[arg(long, default_value_t = 1000)]
+    limit: i64,
+}
+
+#[derive(Debug, Args)]
 struct PolicyArgs {
     #[command(subcommand)]
     command: PolicyCommand,
@@ -257,11 +294,15 @@ fn main() -> Result<()> {
         Commands::Run(args) => run_command(args),
         Commands::Compact(args) => compact(args),
         Commands::Show(args) => show(args),
+        Commands::SearchSpans(args) => search_spans(args),
         Commands::Spans(args) => spans(args),
         Commands::Receipt(args) => receipt(args),
         Commands::Purge(args) => purge(args),
         Commands::Policy(args) => policy(args),
         Commands::Top(args) => top(args),
+        Commands::Gain(args) => gain(args),
+        Commands::Discover(args) => discover(args),
+        Commands::Session(args) => session(args),
         Commands::Doctor(args) => doctor(args),
         Commands::Canary(args) => canary(args),
         Commands::Mcp => mcp(),
@@ -941,6 +982,13 @@ fn compact(args: CompactArgs) -> Result<()> {
 }
 
 fn show(args: ShowArgs) -> Result<()> {
+    if args.lines.is_some() && args.grep.is_some() {
+        bail!("show accepts only one of --lines or --grep");
+    }
+    if args.around > 0 && args.grep.is_none() {
+        bail!("--around requires --grep");
+    }
+
     let paths = StorePaths::discover()?;
     let store = Store::open(&paths)?;
     let Some(span) = store.get_span(&args.span_id)? else {
@@ -960,11 +1008,73 @@ fn show(args: ShowArgs) -> Result<()> {
         }
         guard_secret_like_output(&selected, args.force)?;
         print!("{selected}");
+    } else if let Some(pattern) = args.grep {
+        let selected = grep_artifact(&artifact, &pattern, args.around);
+        guard_secret_like_output(&selected, args.force)?;
+        print!("{selected}");
     } else {
         guard_secret_like_output(&artifact, args.force)?;
         print!("{artifact}");
     }
     Ok(())
+}
+
+fn search_spans(args: SearchSpansArgs) -> Result<()> {
+    let paths = StorePaths::discover()?;
+    let store = Store::open(&paths)?;
+    let spans = store.recent_spans(args.limit.max(0))?;
+    let mut hits = 0usize;
+
+    for span in spans {
+        let artifact = std::fs::read_to_string(&span.artifact_path)
+            .with_context(|| format!("could not read {}", span.artifact_path))?;
+        for (idx, line) in artifact.lines().enumerate() {
+            if line.contains(&args.pattern) {
+                let selected = format!("{}:{}: {line}\n", span.id, idx + 1);
+                guard_secret_like_output(&selected, args.force)?;
+                print!("{selected}");
+                if let Some(command) = &span.command {
+                    println!("   command: {}", display_command(command));
+                }
+                hits += 1;
+            }
+        }
+    }
+
+    if hits == 0 {
+        println!("no matches");
+    }
+    Ok(())
+}
+
+fn grep_artifact(artifact: &str, pattern: &str, around: usize) -> String {
+    let lines = artifact.lines().collect::<Vec<_>>();
+    let mut selected = BTreeSet::new();
+    for (idx, line) in lines.iter().enumerate() {
+        if line.contains(pattern) {
+            let start = idx.saturating_sub(around);
+            let end = (idx + around + 1).min(lines.len());
+            for selected_idx in start..end {
+                selected.insert(selected_idx);
+            }
+        }
+    }
+
+    let mut output = String::new();
+    let mut last = None;
+    for idx in selected {
+        if let Some(last_idx) = last
+            && idx > last_idx + 1
+        {
+            output.push_str("[context-firewall: omitted unmatched lines]\n");
+        }
+        output.push_str(&format!("{}: {}\n", idx + 1, lines[idx]));
+        last = Some(idx);
+    }
+    if output.is_empty() {
+        output.push_str("no matches\n");
+    }
+    output
 }
 
 fn spans(args: SpansArgs) -> Result<()> {
@@ -1359,6 +1469,220 @@ fn top(args: TopArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn gain(args: AnalyticsArgs) -> Result<()> {
+    let spans = recent_analytics_spans(args.limit)?;
+    let totals = analytics_totals(&spans);
+
+    println!("Context Firewall Gain");
+    println!();
+    println!("spans: {}", spans.len());
+    println!("raw estimated tokens: {}", totals.raw);
+    println!("returned estimated tokens: {}", totals.returned);
+    println!("saved estimated tokens: {}", totals.saved);
+    println!("reduction: {}", percent(totals.saved, totals.raw));
+    Ok(())
+}
+
+fn discover(args: AnalyticsArgs) -> Result<()> {
+    let spans = recent_analytics_spans(args.limit)?;
+    println!("Context Firewall Discover");
+    println!();
+
+    if spans.is_empty() {
+        println!("no spans yet");
+        return Ok(());
+    }
+
+    let mut low_savings = spans
+        .iter()
+        .filter(|span| {
+            span.raw_estimated_tokens >= 100
+                && span.returned_estimated_tokens * 10 > span.raw_estimated_tokens * 7
+        })
+        .collect::<Vec<_>>();
+    low_savings.sort_by_key(|span| std::cmp::Reverse(span.raw_estimated_tokens));
+
+    println!("low savings:");
+    print_span_list(&low_savings, 5);
+    println!();
+
+    let mut large_raw = spans.iter().collect::<Vec<_>>();
+    large_raw.sort_by_key(|span| std::cmp::Reverse(span.raw_estimated_tokens));
+    println!("largest raw outputs:");
+    print_span_list(&large_raw, 5);
+    println!();
+
+    let mut repeats: BTreeMap<&str, usize> = BTreeMap::new();
+    for span in &spans {
+        if !span.repeat_key.is_empty() {
+            *repeats.entry(&span.repeat_key).or_default() += 1;
+        }
+    }
+    let mut repeats = repeats
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .collect::<Vec<_>>();
+    repeats.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    println!("repeated unchanged output:");
+    if repeats.is_empty() {
+        println!("  none");
+    } else {
+        for (repeat_key, count) in repeats.into_iter().take(5) {
+            println!("  {count}x {}", &repeat_key[..repeat_key.len().min(12)]);
+        }
+    }
+    println!();
+
+    let mut passthrough: BTreeMap<String, usize> = BTreeMap::new();
+    for span in &spans {
+        if span.risk_class == "pass_through" {
+            let command = span
+                .command
+                .as_deref()
+                .map(command_name)
+                .unwrap_or_else(|| "unknown".to_string());
+            *passthrough.entry(command).or_default() += 1;
+        }
+    }
+    let mut passthrough = passthrough
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .collect::<Vec<_>>();
+    passthrough.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    println!("repeated passthrough:");
+    if passthrough.is_empty() {
+        println!("  none");
+    } else {
+        for (command, count) in passthrough.into_iter().take(5) {
+            println!("  {command}: {count}");
+        }
+    }
+    Ok(())
+}
+
+fn session(args: AnalyticsArgs) -> Result<()> {
+    let spans = recent_analytics_spans(args.limit)?;
+    let totals = analytics_totals(&spans);
+    let mut reducers: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut delivery: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut commands: BTreeMap<String, (usize, i64)> = BTreeMap::new();
+
+    for span in &spans {
+        *reducers
+            .entry(span.reducer.as_deref().unwrap_or("unknown"))
+            .or_default() += 1;
+        *delivery.entry(span.delivery_status.as_str()).or_default() += 1;
+        if let Some(command) = &span.command {
+            let name = command_name(command);
+            let entry = commands.entry(name).or_default();
+            entry.0 += 1;
+            entry.1 += span.raw_estimated_tokens;
+        }
+    }
+
+    println!("Context Firewall Session");
+    println!();
+    println!("cfw-routed commands: {}", spans.len());
+    println!("raw estimated tokens: {}", totals.raw);
+    println!("returned estimated tokens: {}", totals.returned);
+    println!("saved estimated tokens: {}", totals.saved);
+    println!("reduction: {}", percent(totals.saved, totals.raw));
+    println!();
+    print_counts("reducers", reducers);
+    println!();
+    print_counts("delivery", delivery);
+    println!();
+    println!("top commands:");
+    let mut commands = commands.into_iter().collect::<Vec<_>>();
+    commands.sort_by_key(|(_, (_, raw))| std::cmp::Reverse(*raw));
+    if commands.is_empty() {
+        println!("  none");
+    } else {
+        for (command, (count, raw)) in commands.into_iter().take(5) {
+            println!("  {command}: {count} spans, raw={raw}");
+        }
+    }
+    Ok(())
+}
+
+struct AnalyticsTotals {
+    raw: i64,
+    returned: i64,
+    saved: i64,
+}
+
+fn recent_analytics_spans(limit: i64) -> Result<Vec<SpanRecord>> {
+    let paths = StorePaths::discover()?;
+    let store = Store::open(&paths)?;
+    store.recent_spans(limit.max(0))
+}
+
+fn analytics_totals(spans: &[SpanRecord]) -> AnalyticsTotals {
+    let raw = spans.iter().map(|span| span.raw_estimated_tokens).sum();
+    let returned = spans
+        .iter()
+        .map(|span| span.returned_estimated_tokens)
+        .sum();
+    AnalyticsTotals {
+        raw,
+        returned,
+        saved: (raw - returned).max(0),
+    }
+}
+
+fn percent(part: i64, whole: i64) -> String {
+    if whole <= 0 {
+        "0.0%".to_string()
+    } else {
+        format!("{:.1}%", part as f64 * 100.0 / whole as f64)
+    }
+}
+
+fn command_name(command: &str) -> String {
+    command
+        .split_whitespace()
+        .next()
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn print_counts(title: &str, counts: BTreeMap<&str, usize>) {
+    println!("{title}:");
+    if counts.is_empty() {
+        println!("  none");
+        return;
+    }
+    let mut counts = counts.into_iter().collect::<Vec<_>>();
+    counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+    for (name, count) in counts {
+        println!("  {name}: {count}");
+    }
+}
+
+fn print_span_list(spans: &[&SpanRecord], limit: usize) {
+    if spans.is_empty() {
+        println!("  none");
+        return;
+    }
+    for span in spans.iter().take(limit) {
+        println!(
+            "  {} raw={} returned={} saved={} reducer={}",
+            &span.id[..12],
+            span.raw_estimated_tokens,
+            span.returned_estimated_tokens,
+            (span.raw_estimated_tokens - span.returned_estimated_tokens).max(0),
+            span.reducer.as_deref().unwrap_or("unknown")
+        );
+        if let Some(command) = &span.command {
+            println!("     command: {}", display_command(command));
+        }
+    }
+}
+
+fn display_command(command: &str) -> String {
+    command.replace('\n', "\\n")
 }
 
 fn purge(args: PurgeArgs) -> Result<()> {
