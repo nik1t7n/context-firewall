@@ -63,12 +63,14 @@ Add:
 
 - `cfw show <span> --grep <pattern>`
 - `cfw show <span> --around <n>`
+- `cfw show <span> --json-path <path>`
 - `cfw search-spans <pattern>`
 
 Behavior:
 
 - `--grep` searches the stored raw artifact.
 - `--around` includes surrounding lines for each match.
+- `--json-path` extracts a JSON value from stored raw output.
 - `search-spans` searches recent artifacts and prints span id, command, line
   number, and matching line.
 - Secret-like guard behavior must remain at least as strict as current `show`.

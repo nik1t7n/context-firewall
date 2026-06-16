@@ -149,6 +149,29 @@ fn run_receipt_and_show_use_real_artifacts() {
         .stdout(predicate::str::contains("1: alpha"))
         .stdout(predicate::str::contains("2: beta"));
 
+    let json_output = Command::cargo_bin("cfw")
+        .expect("cfw binary")
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["run", "--", "printf", r#"{"items":[1,2],"ok":true}"#])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json_stdout = String::from_utf8(json_output).expect("utf8 stdout");
+    let json_span_id = json_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("json span id")
+        .to_string();
+    let mut json_path_show = Command::cargo_bin("cfw").expect("cfw binary");
+    json_path_show
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["show", &json_span_id, "--json-path", "$.items[1]"])
+        .assert()
+        .success()
+        .stdout("2\n");
+
     let mut search_spans = Command::cargo_bin("cfw").expect("cfw binary");
     search_spans
         .env("CFW_DATA_DIR", temp.path())
@@ -810,6 +833,10 @@ fn mcp_lists_context_firewall_tools() {
         show_tool["inputSchema"]["properties"]["around"]["minimum"],
         0
     );
+    assert_eq!(
+        show_tool["inputSchema"]["properties"]["json_path"]["type"],
+        "string"
+    );
     assert!(show_tool["inputSchema"]["oneOf"].is_array());
     assert!(tools.iter().any(|tool| tool["name"] == "cfw_search"));
     assert!(tools.iter().any(|tool| tool["name"] == "cfw_gain"));
@@ -835,6 +862,20 @@ fn mcp_calls_analytics_and_search_tools() {
         .lines()
         .find_map(|line| line.strip_prefix("span: cfw://span/"))
         .expect("span id");
+    let mut json_run = Command::cargo_bin("cfw").expect("cfw binary");
+    let json_output = json_run
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["run", "--", "printf", r#"{"items":[1,2],"ok":true}"#])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json_stdout = String::from_utf8(json_output).expect("utf8 stdout");
+    let json_span_id = json_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("json span id");
 
     let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("cfw"))
         .env("CFW_DATA_DIR", temp.path())
@@ -852,6 +893,7 @@ fn mcp_calls_analytics_and_search_tools() {
             serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cfw_search","arguments":{"pattern":"needle","limit":5}}}),
             serde_json::json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"cfw_show","arguments":{"span_id":span_id,"grep":"needle","around":1}}}),
             serde_json::json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"cfw_show","arguments":{"span_id":span_id,"grep":"needle","around":-1}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"cfw_show","arguments":{"span_id":json_span_id,"json_path":"$.items[1]"}}}),
         ] {
             writeln!(stdin, "{message}").expect("write mcp request");
         }
@@ -866,6 +908,7 @@ fn mcp_calls_analytics_and_search_tools() {
     assert!(stdout.contains("1: alpha"));
     assert!(stdout.contains("2: needle"));
     assert!(stdout.contains("cfw_show around must be >= 0"));
+    assert!(stdout.contains("2\\n"));
 }
 
 #[test]

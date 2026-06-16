@@ -167,6 +167,10 @@ struct ShowArgs {
     #[arg(long)]
     grep: Option<String>,
 
+    /// Extract a value from JSON raw output, e.g. $.items[0].
+    #[arg(long)]
+    json_path: Option<String>,
+
     /// Include this many surrounding lines for --grep matches.
     #[arg(long, default_value_t = 0)]
     around: usize,
@@ -1264,8 +1268,10 @@ fn compact(args: CompactArgs) -> Result<()> {
 }
 
 fn show(args: ShowArgs) -> Result<()> {
-    if args.lines.is_some() && args.grep.is_some() {
-        bail!("show accepts only one of --lines or --grep");
+    let selector_count =
+        args.lines.is_some() as u8 + args.grep.is_some() as u8 + args.json_path.is_some() as u8;
+    if selector_count > 1 {
+        bail!("show accepts only one of --lines, --grep, or --json-path");
     }
     if args.around > 0 && args.grep.is_none() {
         bail!("--around requires --grep");
@@ -1291,6 +1297,8 @@ fn show(args: ShowArgs) -> Result<()> {
         selected
     } else if let Some(pattern) = args.grep {
         grep_artifact(&artifact, &pattern, args.around)
+    } else if let Some(path) = args.json_path {
+        json_path_artifact(&artifact, &path)?
     } else {
         artifact
     };
@@ -1405,6 +1413,52 @@ fn grep_artifact(artifact: &str, pattern: &str, around: usize) -> String {
         output.push_str("no matches\n");
     }
     output
+}
+
+fn json_path_artifact(artifact: &str, path: &str) -> Result<String> {
+    let root: serde_json::Value =
+        serde_json::from_str(artifact).context("artifact is not valid JSON")?;
+    let mut value = &root;
+    if path == "$" {
+        return Ok(format!("{value}\n"));
+    }
+    let Some(rest) = path.strip_prefix("$.") else {
+        bail!("--json-path must be `$` or start with `$.`");
+    };
+
+    for segment in rest.split('.') {
+        let mut field = segment;
+        loop {
+            if let Some((name, tail)) = field.split_once('[') {
+                if !name.is_empty() {
+                    value = value
+                        .get(name)
+                        .ok_or_else(|| anyhow::anyhow!("json path not found: {path}"))?;
+                }
+                let Some((index, next_tail)) = tail.split_once(']') else {
+                    bail!("invalid --json-path segment: {segment}");
+                };
+                let index = index
+                    .parse::<usize>()
+                    .with_context(|| format!("invalid --json-path index: {index}"))?;
+                value = value
+                    .get(index)
+                    .ok_or_else(|| anyhow::anyhow!("json path not found: {path}"))?;
+                if next_tail.is_empty() {
+                    break;
+                }
+                field = next_tail;
+            } else {
+                if !field.is_empty() {
+                    value = value
+                        .get(field)
+                        .ok_or_else(|| anyhow::anyhow!("json path not found: {path}"))?;
+                }
+                break;
+            }
+        }
+    }
+    Ok(format!("{value}\n"))
 }
 
 fn spans(args: SpansArgs) -> Result<()> {
@@ -1611,6 +1665,7 @@ fn mcp_tools() -> Vec<serde_json::Value> {
                     "span_id": {"type": "string"},
                     "lines": {"type": "string", "description": "Optional 1-based range A:B."},
                     "grep": {"type": "string", "description": "Optional plain-text pattern to search within the span."},
+                    "json_path": {"type": "string", "description": "Optional JSON path, for example $.items[0]."},
                     "around": {"type": "integer", "minimum": 0, "description": "Optional surrounding line count for grep."},
                     "force": {"type": "boolean", "description": "Bypass secret-like output guard."},
                     "cwd": {"type": "string", "description": "Optional working directory."}
@@ -1622,6 +1677,7 @@ fn mcp_tools() -> Vec<serde_json::Value> {
                             "anyOf": [
                                 {"required": ["lines"]},
                                 {"required": ["grep"]},
+                                {"required": ["json_path"]},
                                 {"required": ["around"]}
                             ]
                         }
@@ -1631,13 +1687,29 @@ fn mcp_tools() -> Vec<serde_json::Value> {
                         "not": {
                             "anyOf": [
                                 {"required": ["grep"]},
+                                {"required": ["json_path"]},
                                 {"required": ["around"]}
                             ]
                         }
                     },
                     {
                         "required": ["grep"],
-                        "not": {"required": ["lines"]}
+                        "not": {
+                            "anyOf": [
+                                {"required": ["lines"]},
+                                {"required": ["json_path"]}
+                            ]
+                        }
+                    },
+                    {
+                        "required": ["json_path"],
+                        "not": {
+                            "anyOf": [
+                                {"required": ["lines"]},
+                                {"required": ["grep"]},
+                                {"required": ["around"]}
+                            ]
+                        }
                     }
                 ]
             }
@@ -1792,6 +1864,9 @@ fn mcp_show_args(args: &serde_json::Value) -> Result<Vec<String>> {
     }
     if let Some(grep) = args.get("grep").and_then(|value| value.as_str()) {
         argv.extend(["--grep".to_string(), grep.to_string()]);
+    }
+    if let Some(json_path) = args.get("json_path").and_then(|value| value.as_str()) {
+        argv.extend(["--json-path".to_string(), json_path.to_string()]);
     }
     if let Some(around) = args.get("around") {
         let around = around
