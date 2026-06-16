@@ -270,8 +270,9 @@ impl Policy {
             };
         }
 
-        if matches!(program, "cat" | "tail" | "less" | "head")
-            && argv.iter().any(|arg| arg.ends_with(".log"))
+        if is_log_command(argv)
+            || (matches!(program, "cat" | "tail" | "less" | "head")
+                && argv.iter().any(|arg| arg.ends_with(".log")))
         {
             return PolicyDecision {
                 action: self.actions.large_log,
@@ -373,15 +374,49 @@ fn looks_binary_path(value: &str) -> bool {
 }
 
 fn is_test_command(argv: &[String]) -> bool {
-    let joined = argv.join(" ");
-    joined.contains("cargo test")
-        || joined.contains("npm test")
-        || joined.contains("pnpm test")
-        || joined.contains("yarn test")
-        || joined.contains("pytest")
-        || joined.contains("go test")
-        || joined.contains("vitest")
-        || joined.contains("jest")
+    let Some(program) = argv.first().map(|value| command_name(value)) else {
+        return false;
+    };
+    match program.as_str() {
+        "cargo" | "go" => argv.get(1).is_some_and(|arg| arg == "test"),
+        "npm" | "pnpm" | "yarn" | "bun" => argv.get(1).is_some_and(|arg| arg == "test"),
+        "pytest" | "py.test" | "jest" | "vitest" | "tsc" | "eslint" => true,
+        "npx" => argv.iter().skip(1).map(|arg| command_name(arg)).any(|arg| {
+            matches!(
+                arg.as_str(),
+                "pytest" | "py.test" | "jest" | "vitest" | "tsc" | "eslint"
+            )
+        }),
+        "python" | "python3" => argv
+            .windows(2)
+            .any(|window| window[0] == "-m" && matches!(window[1].as_str(), "pytest" | "py.test")),
+        "terraform" => argv.get(1).is_some_and(|arg| arg == "plan"),
+        "gh" => {
+            argv.get(1).is_some_and(|arg| arg == "pr")
+                && argv
+                    .get(2)
+                    .is_some_and(|arg| matches!(arg.as_str(), "checks" | "view"))
+        }
+        _ => false,
+    }
+}
+
+fn is_log_command(argv: &[String]) -> bool {
+    let Some(program) = argv.first().map(|value| command_name(value)) else {
+        return false;
+    };
+    matches!(program.as_str(), "docker" | "kubectl")
+        && argv
+            .get(1)
+            .is_some_and(|arg| matches!(arg.as_str(), "logs" | "log"))
+}
+
+fn command_name(value: &str) -> String {
+    Path::new(value)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(value)
+        .to_ascii_lowercase()
 }
 
 fn is_browser_snapshot_command(argv: &[String]) -> bool {
@@ -464,6 +499,59 @@ mod tests {
         );
         assert_eq!(decision.action, PolicyAction::Compact);
         assert_eq!(decision.reason_code, "browser_snapshot");
+    }
+
+    #[test]
+    fn diagnostic_commands_use_test_output_policy() {
+        let policy = Policy::default();
+        let cwd = std::env::current_dir().expect("cwd");
+        for argv in [
+            vec!["npx".to_string(), "tsc".to_string(), "--noEmit".to_string()],
+            vec!["eslint".to_string(), ".".to_string()],
+            vec!["terraform".to_string(), "plan".to_string()],
+            vec!["gh".to_string(), "pr".to_string(), "checks".to_string()],
+        ] {
+            let decision = policy.decide_command(&argv, &cwd);
+            assert_eq!(decision.action, PolicyAction::Compact);
+            assert_eq!(decision.reason_code, "test_output");
+        }
+    }
+
+    #[test]
+    fn container_log_commands_use_log_policy() {
+        let policy = Policy::default();
+        let cwd = std::env::current_dir().expect("cwd");
+        for argv in [
+            vec!["docker".to_string(), "logs".to_string(), "api".to_string()],
+            vec![
+                "kubectl".to_string(),
+                "logs".to_string(),
+                "deploy/api".to_string(),
+            ],
+        ] {
+            let decision = policy.decide_command(&argv, &cwd);
+            assert_eq!(decision.action, PolicyAction::StoreAndReturnMatches);
+            assert_eq!(decision.reason_code, "large_log");
+        }
+    }
+
+    #[test]
+    fn diagnostic_command_matching_does_not_use_substrings() {
+        let policy = Policy::default();
+        let cwd = std::env::current_dir().expect("cwd");
+        let decision =
+            policy.decide_command(&["cat".to_string(), "tsconfig.json".to_string()], &cwd);
+        assert_ne!(decision.reason_code, "test_output");
+
+        let decision = policy.decide_command(
+            &[
+                "sh".to_string(),
+                "-c".to_string(),
+                "echo docker logs".to_string(),
+            ],
+            &cwd,
+        );
+        assert_ne!(decision.reason_code, "large_log");
     }
 
     #[test]
