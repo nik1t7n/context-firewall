@@ -868,6 +868,83 @@ fn mcp_calls_analytics_and_search_tools() {
 }
 
 #[test]
+fn learn_suggests_rules_from_repeated_failed_commands() {
+    let temp = TempDir::new().expect("temp dir");
+
+    for _ in 0..2 {
+        let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+        run.env("CFW_DATA_DIR", temp.path())
+            .env("CFW_SESSION", "learn-session")
+            .args(["run", "--", "sh", "-c", "printf 'learn failure\\n'; exit 7"])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("[context-firewall]"));
+    }
+
+    for marker in ["one", "two"] {
+        let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+        let script = format!(
+            "printf '{marker} '; i=0; while [ $i -lt 260 ]; do printf 'generic-noise '; i=$((i+1)); done"
+        );
+        run.env("CFW_DATA_DIR", temp.path())
+            .env("CFW_SESSION", "learn-session")
+            .args(["run", "--kind", "generic", "--", "sh", "-c", &script])
+            .assert()
+            .success();
+    }
+
+    for _ in 0..2 {
+        let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+        let output = run
+            .env("CFW_DATA_DIR", temp.path())
+            .env("CFW_SESSION", "learn-session")
+            .args([
+                "run",
+                "--kind",
+                "test-output",
+                "--",
+                "printf",
+                "test result: ok\n",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let stdout = String::from_utf8(output).expect("utf8 stdout");
+        let span_id = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("span: cfw://span/"))
+            .expect("span id");
+        let mut show = Command::cargo_bin("cfw").expect("cfw binary");
+        show.env("CFW_DATA_DIR", temp.path())
+            .env("CFW_SESSION", "learn-session")
+            .args(["show", span_id])
+            .assert()
+            .success();
+    }
+
+    let mut learn = Command::cargo_bin("cfw").expect("cfw binary");
+    learn
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("learn")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Context Firewall Learn"))
+        .stdout(predicate::str::contains("suggestions for AGENTS.md"))
+        .stdout(predicate::str::contains("repeated failed commands"))
+        .stdout(predicate::str::contains("2 failures"))
+        .stdout(predicate::str::contains("spans:"))
+        .stdout(predicate::str::contains("repeated raw lookups"))
+        .stdout(predicate::str::contains("agent fetched raw output 2 times"))
+        .stdout(predicate::str::contains("low-savings reducers"))
+        .stdout(predicate::str::contains("generic"))
+        .stdout(predicate::str::contains("repeated large generic commands"))
+        .stdout(predicate::str::contains("match_command = \"sh\""))
+        .stdout(predicate::str::contains("mode: read-only"));
+}
+
+#[test]
 fn install_agent_configs_for_gemini_claude_cursor_and_antigravity() {
     let temp = TempDir::new().expect("temp dir");
     let home = temp.path().join("home");

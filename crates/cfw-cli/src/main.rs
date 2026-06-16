@@ -77,6 +77,8 @@ enum Commands {
     Discover(AnalyticsArgs),
     /// Show recent Context Firewall session adoption and reducer mix.
     Session(AnalyticsArgs),
+    /// Suggest local rules from repeated misses in the span ledger.
+    Learn(AnalyticsArgs),
     /// Check local Context Firewall and Codex integration health.
     Doctor(DoctorArgs),
     /// Run real integration canaries.
@@ -308,6 +310,7 @@ fn main() -> Result<()> {
         Commands::Gain(args) => gain(args),
         Commands::Discover(args) => discover(args),
         Commands::Session(args) => session(args),
+        Commands::Learn(args) => learn(args),
         Commands::Doctor(args) => doctor(args),
         Commands::Canary(args) => canary(args),
         Commands::Mcp => mcp(),
@@ -1235,7 +1238,7 @@ fn show(args: ShowArgs) -> Result<()> {
     let artifact = std::fs::read_to_string(&span.artifact_path)
         .with_context(|| format!("could not read {}", span.artifact_path))?;
 
-    if let Some(range) = args.lines {
+    let selected = if let Some(range) = args.lines {
         let (start, end) = parse_line_range(&range)?;
         let mut selected = String::new();
         for (idx, line) in artifact.lines().enumerate() {
@@ -1244,16 +1247,64 @@ fn show(args: ShowArgs) -> Result<()> {
                 selected.push_str(&format!("{line_no}: {line}\n"));
             }
         }
-        guard_secret_like_output(&selected, args.force)?;
-        print!("{selected}");
+        selected
     } else if let Some(pattern) = args.grep {
-        let selected = grep_artifact(&artifact, &pattern, args.around);
-        guard_secret_like_output(&selected, args.force)?;
-        print!("{selected}");
+        grep_artifact(&artifact, &pattern, args.around)
     } else {
-        guard_secret_like_output(&artifact, args.force)?;
-        print!("{artifact}");
-    }
+        artifact
+    };
+    guard_secret_like_output(&selected, args.force)?;
+    record_show_lookup(&paths, &store, &span, &selected)?;
+    print!("{selected}");
+    Ok(())
+}
+
+fn record_show_lookup(
+    paths: &StorePaths,
+    store: &Store,
+    target: &SpanRecord,
+    output: &str,
+) -> Result<()> {
+    let session_id = current_session_id();
+    let cwd = std::env::current_dir().context("could not read current directory")?;
+    store.ensure_session(
+        &session_id,
+        "cfw",
+        Some(&cwd.display().to_string()),
+        None,
+        Some(env!("CARGO_PKG_VERSION")),
+    )?;
+    let span_id = new_id();
+    let session_dir = paths.sessions_dir.join(&session_id).join("artifacts");
+    std::fs::create_dir_all(&session_dir)
+        .with_context(|| format!("could not create {}", session_dir.display()))?;
+    let artifact_path = session_dir.join(format!("{span_id}.txt"));
+    std::fs::write(&artifact_path, output.as_bytes())
+        .with_context(|| format!("could not write {}", artifact_path.display()))?;
+    let estimate = estimate_tokens(output);
+    store.insert_span(&SpanRecord {
+        id: span_id,
+        session_id,
+        kind: "show".to_string(),
+        source: "cfw_show".to_string(),
+        command: Some(format!("cfw show {}", target.id)),
+        cwd: Some(cwd.display().to_string()),
+        exit_code: Some(0),
+        raw_bytes: output.len() as i64,
+        raw_estimated_tokens: estimate.tokens,
+        returned_bytes: output.len() as i64,
+        returned_estimated_tokens: estimate.tokens,
+        hash: blake3::hash(output.as_bytes()).to_hex().to_string(),
+        reducer: Some("show".to_string()),
+        policy_action: "allow".to_string(),
+        delivery_status: DeliveryStatus::ObservedOnly,
+        delivery_evidence_path: None,
+        repeat_key: String::new(),
+        repeat_evidence_json: "{}".to_string(),
+        risk_class: "raw_lookup".to_string(),
+        artifact_path: artifact_path.display().to_string(),
+        created_at: Utc::now(),
+    })?;
     Ok(())
 }
 
@@ -1961,6 +2012,194 @@ fn session(args: AnalyticsArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn learn(args: AnalyticsArgs) -> Result<()> {
+    let spans = recent_analytics_spans(args.limit)?;
+    println!("Context Firewall Learn");
+    println!();
+
+    if spans.is_empty() {
+        println!("no spans yet");
+        return Ok(());
+    }
+
+    println!("suggestions for AGENTS.md:");
+    print_repeated_failed_commands(&spans);
+    print_repeated_show_lookups(&spans);
+    println!();
+    println!("suggestions for .cfw/reducers.toml:");
+    print_low_savings_reducers(&spans);
+    print_large_generic_commands(&spans);
+    println!();
+    println!("mode: read-only");
+    println!("apply: not implemented");
+    Ok(())
+}
+
+fn print_repeated_failed_commands(spans: &[SpanRecord]) {
+    let mut failures: BTreeMap<String, Vec<&SpanRecord>> = BTreeMap::new();
+    for span in spans {
+        if span.exit_code.unwrap_or(0) != 0
+            && let Some(command) = &span.command
+        {
+            failures.entry(command.clone()).or_default().push(span);
+        }
+    }
+    let mut failures = failures
+        .into_iter()
+        .filter(|(_, spans)| spans.len() > 1)
+        .collect::<Vec<_>>();
+    failures.sort_by_key(|(_, spans)| std::cmp::Reverse(spans.len()));
+
+    println!("  repeated failed commands:");
+    if failures.is_empty() {
+        println!("    none");
+        return;
+    }
+    for (command, spans) in failures.into_iter().take(5) {
+        println!(
+            "    - add a project note for `{}`: {} failures, spans: {}",
+            display_command(&command),
+            spans.len(),
+            span_ids(&spans)
+        );
+    }
+}
+
+fn print_repeated_show_lookups(spans: &[SpanRecord]) {
+    let span_by_id = spans
+        .iter()
+        .map(|span| (span.id.as_str(), span))
+        .collect::<BTreeMap<_, _>>();
+    let show_spans = spans
+        .iter()
+        .filter(|span| {
+            span.command
+                .as_deref()
+                .and_then(cfw_show_target)
+                .and_then(|target| span_by_id.get(target))
+                .is_some_and(|target| {
+                    !matches!(
+                        target.reducer.as_deref().unwrap_or("unknown"),
+                        "generic" | "unknown"
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+
+    println!("  repeated raw lookups:");
+    if show_spans.len() < 2 {
+        println!("    none");
+        return;
+    }
+    println!(
+        "    - agent fetched raw output {} times; consider tightening reducer notes. spans: {}",
+        show_spans.len(),
+        span_ids(&show_spans)
+    );
+}
+
+fn print_low_savings_reducers(spans: &[SpanRecord]) {
+    let mut reducers: BTreeMap<String, Vec<&SpanRecord>> = BTreeMap::new();
+    for span in spans {
+        if span.raw_estimated_tokens >= 100
+            && span.returned_estimated_tokens * 10 > span.raw_estimated_tokens * 7
+        {
+            reducers
+                .entry(
+                    span.reducer
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                )
+                .or_default()
+                .push(span);
+        }
+    }
+    let mut reducers = reducers
+        .into_iter()
+        .filter(|(_, spans)| spans.len() > 1)
+        .collect::<Vec<_>>();
+    reducers.sort_by_key(|(_, spans)| {
+        std::cmp::Reverse(
+            spans
+                .iter()
+                .map(|span| span.raw_estimated_tokens)
+                .sum::<i64>(),
+        )
+    });
+
+    println!("  low-savings reducers:");
+    if reducers.is_empty() {
+        println!("    none");
+        return;
+    }
+    for (reducer, spans) in reducers.into_iter().take(5) {
+        println!(
+            "    - tune `{reducer}` or add a TOML filter: {} low-savings spans, evidence: {}",
+            spans.len(),
+            span_ids(&spans)
+        );
+    }
+}
+
+fn print_large_generic_commands(spans: &[SpanRecord]) {
+    let mut commands: BTreeMap<String, Vec<&SpanRecord>> = BTreeMap::new();
+    for span in spans {
+        let reducer = span.reducer.as_deref().unwrap_or("unknown");
+        if span.raw_estimated_tokens >= 200
+            && matches!(reducer, "generic" | "unknown")
+            && let Some(command) = &span.command
+        {
+            commands
+                .entry(command_name(command))
+                .or_default()
+                .push(span);
+        }
+    }
+    let mut commands = commands.into_iter().collect::<Vec<_>>();
+    commands.retain(|(_, spans)| spans.len() > 1);
+    commands.sort_by_key(|(_, spans)| {
+        std::cmp::Reverse(
+            spans
+                .iter()
+                .map(|span| span.raw_estimated_tokens)
+                .sum::<i64>(),
+        )
+    });
+
+    println!("  repeated large generic commands:");
+    if commands.is_empty() {
+        println!("    none");
+        return;
+    }
+    for (command, spans) in commands.into_iter().take(5) {
+        println!(
+            "    - add [[reducers]] match_command = \"{}\": {} spans, evidence: {}",
+            command,
+            spans.len(),
+            span_ids(&spans)
+        );
+    }
+}
+
+fn cfw_show_target(command: &str) -> Option<&str> {
+    let mut words = command.split_whitespace().map(command_name);
+    if !matches!(words.next().as_deref(), Some("cfw"))
+        || !matches!(words.next().as_deref(), Some("show"))
+    {
+        return None;
+    }
+    command.split_whitespace().nth(2)
+}
+
+fn span_ids(spans: &[&SpanRecord]) -> String {
+    spans
+        .iter()
+        .take(5)
+        .map(|span| span.id[..span.id.len().min(12)].to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 struct AnalyticsTotals {
