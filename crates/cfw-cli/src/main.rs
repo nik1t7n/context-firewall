@@ -76,7 +76,7 @@ enum Commands {
     /// Show commands that need better Context Firewall coverage.
     Discover(AnalyticsArgs),
     /// Show recent Context Firewall session adoption and reducer mix.
-    Session(AnalyticsArgs),
+    Session(SessionArgs),
     /// Suggest local rules from repeated misses in the span ledger.
     Learn(AnalyticsArgs),
     /// Check local Context Firewall and Codex integration health.
@@ -261,6 +261,17 @@ struct AnalyticsArgs {
     /// Number of recent spans to inspect.
     #[arg(long, default_value_t = 1000)]
     limit: i64,
+}
+
+#[derive(Debug, Args)]
+struct SessionArgs {
+    /// Number of recent spans to inspect.
+    #[arg(long, default_value_t = 1000)]
+    limit: i64,
+
+    /// Include per-reducer quality stats.
+    #[arg(long)]
+    reducers: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1969,7 +1980,7 @@ fn discover(args: AnalyticsArgs) -> Result<()> {
     Ok(())
 }
 
-fn session(args: AnalyticsArgs) -> Result<()> {
+fn session(args: SessionArgs) -> Result<()> {
     let spans = recent_analytics_spans(args.limit)?;
     let totals = analytics_totals(&spans);
     let mut reducers: BTreeMap<&str, usize> = BTreeMap::new();
@@ -2011,7 +2022,120 @@ fn session(args: AnalyticsArgs) -> Result<()> {
             println!("  {command}: {count} spans, raw={raw}");
         }
     }
+    if args.reducers {
+        println!();
+        print_reducer_quality_stats(&spans);
+    }
     Ok(())
+}
+
+#[derive(Default)]
+struct ReducerQuality {
+    spans: usize,
+    raw: i64,
+    returned: i64,
+    raw_fetches: usize,
+    reruns: usize,
+    failures: usize,
+    failure_exit_codes: BTreeMap<String, usize>,
+}
+
+fn print_reducer_quality_stats(spans: &[SpanRecord]) {
+    let span_by_id = spans
+        .iter()
+        .map(|span| (span.id.as_str(), span))
+        .collect::<BTreeMap<_, _>>();
+    let mut stats: BTreeMap<String, ReducerQuality> = BTreeMap::new();
+    let mut repeats: BTreeMap<(String, String), usize> = BTreeMap::new();
+
+    for span in spans {
+        if span.source == "cfw_show" {
+            if let Some(target) = span
+                .command
+                .as_deref()
+                .and_then(cfw_show_target)
+                .and_then(|target| span_by_id.get(target))
+            {
+                let reducer = target
+                    .reducer
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                stats.entry(reducer).or_default().raw_fetches += 1;
+            }
+            continue;
+        }
+
+        let reducer = span
+            .reducer
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        let entry = stats.entry(reducer.clone()).or_default();
+        entry.spans += 1;
+        entry.raw += span.raw_estimated_tokens;
+        entry.returned += span.returned_estimated_tokens;
+        match span.exit_code {
+            Some(0) => {}
+            Some(code) => {
+                entry.failures += 1;
+                *entry
+                    .failure_exit_codes
+                    .entry(code.to_string())
+                    .or_default() += 1;
+            }
+            None => {
+                entry.failures += 1;
+                *entry
+                    .failure_exit_codes
+                    .entry("signal_or_unknown".to_string())
+                    .or_default() += 1;
+            }
+        }
+        if !span.repeat_key.is_empty() {
+            *repeats
+                .entry((reducer, span.repeat_key.clone()))
+                .or_default() += 1;
+        }
+    }
+
+    for ((reducer, _), count) in repeats {
+        if count > 1 {
+            stats.entry(reducer).or_default().reruns += count;
+        }
+    }
+
+    println!("reducer quality:");
+    if stats.is_empty() {
+        println!("  none");
+        return;
+    }
+
+    let mut stats = stats.into_iter().collect::<Vec<_>>();
+    stats.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.raw));
+    for (reducer, stats) in stats {
+        let saved = (stats.raw - stats.returned).max(0);
+        println!(
+            "  {reducer}: spans={} savings={} raw_fetch_rate={} rerun_rate={} failure_rate={} failures_by_exit={} raw={} returned={}",
+            stats.spans,
+            percent(saved, stats.raw),
+            percent(stats.raw_fetches as i64, stats.spans as i64),
+            percent(stats.reruns as i64, stats.spans as i64),
+            percent(stats.failures as i64, stats.spans as i64),
+            format_failure_exit_codes(&stats.failure_exit_codes),
+            stats.raw,
+            stats.returned,
+        );
+    }
+}
+
+fn format_failure_exit_codes(exit_codes: &BTreeMap<String, usize>) -> String {
+    if exit_codes.is_empty() {
+        return "none".to_string();
+    }
+    exit_codes
+        .iter()
+        .map(|(code, count)| format!("{code}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn learn(args: AnalyticsArgs) -> Result<()> {
