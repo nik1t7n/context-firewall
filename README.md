@@ -254,6 +254,23 @@ Context Firewall understands the noisy shapes agents hit every day:
 | `outline` | headings, imports, declarations, package names |
 | `browser-snapshot` | roles, diagnostics, key accessible nodes |
 
+Project-specific line reducers can live in `.cfw/reducers.toml`:
+
+```toml
+[[reducers]]
+name = "terraform-plan"
+match_command = "^terraform plan"
+strip_lines_matching = ["^Refreshing state", "^Reading\\.\\.\\."]
+keep_lines_matching = ["Error:", "Plan:", "^  #"]
+max_lines = 80
+on_empty = "terraform plan: no relevant output"
+```
+
+Supported fields are `match_command`, `strip_lines_matching`,
+`keep_lines_matching`, `max_lines`, `tail_lines`, and `on_empty`. Project
+reducers run before the user-level reducers file and only apply to default
+`cfw run` output; explicit `--kind` still uses the built-in reducer.
+
 ## Common Workflow
 
 ```bash

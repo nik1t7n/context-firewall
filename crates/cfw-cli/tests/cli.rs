@@ -159,6 +159,139 @@ fn run_receipt_and_show_use_real_artifacts() {
 }
 
 #[test]
+fn project_reducer_toml_filters_default_run_output() {
+    let temp = TempDir::new().expect("temp dir");
+    let data = TempDir::new().expect("data dir");
+    std::fs::create_dir_all(temp.path().join(".cfw")).expect("cfw dir");
+    std::fs::write(
+        data.path().join("reducers.toml"),
+        r#"
+[[reducers]]
+name = "global"
+match_command = "^seq "
+strip_lines_matching = ["^1$"]
+"#,
+    )
+    .expect("global reducers");
+    std::fs::write(
+        temp.path().join(".cfw/reducers.toml"),
+        r#"
+[[reducers]]
+name = "project"
+match_command = "^seq "
+strip_lines_matching = ["^2$"]
+max_lines = 2
+"#,
+    )
+    .expect("project reducers");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    let output = run
+        .current_dir(temp.path())
+        .env("CFW_DATA_DIR", data.path())
+        .args(["run", "--", "seq", "3"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1\n3\n"))
+        .stdout(predicate::str::contains("\n2\n").not())
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let span_id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("span id");
+
+    let mut spans = Command::cargo_bin("cfw").expect("cfw binary");
+    spans
+        .env("CFW_DATA_DIR", data.path())
+        .args(["spans", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(span_id))
+        .stdout(predicate::str::contains("\"kind\": \"dsl:project\""));
+}
+
+#[test]
+fn explicit_kind_ignores_reducer_toml() {
+    let temp = TempDir::new().expect("temp dir");
+    let data = TempDir::new().expect("data dir");
+    std::fs::create_dir_all(temp.path().join(".cfw")).expect("cfw dir");
+    std::fs::write(
+        temp.path().join(".cfw/reducers.toml"),
+        r#"
+[[reducers]]
+name = "project"
+match_command = "^seq "
+strip_lines_matching = ["^2$"]
+"#,
+    )
+    .expect("project reducers");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.current_dir(temp.path())
+        .env("CFW_DATA_DIR", data.path())
+        .args(["run", "--kind", "test-output", "--", "seq", "3"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2"));
+}
+
+#[test]
+fn invalid_reducer_toml_fails_clearly() {
+    let temp = TempDir::new().expect("temp dir");
+    let data = TempDir::new().expect("data dir");
+    std::fs::create_dir_all(temp.path().join(".cfw")).expect("cfw dir");
+    std::fs::write(
+        temp.path().join(".cfw/reducers.toml"),
+        r#"
+[[reducers]]
+name = "bad"
+match_command = "^seq "
+unknown = true
+"#,
+    )
+    .expect("project reducers");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.current_dir(temp.path())
+        .env("CFW_DATA_DIR", data.path())
+        .args(["run", "--", "seq", "3"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown field `unknown`"));
+}
+
+#[test]
+fn invalid_reducer_regex_names_the_reducer() {
+    let temp = TempDir::new().expect("temp dir");
+    let data = TempDir::new().expect("data dir");
+    std::fs::create_dir_all(temp.path().join(".cfw")).expect("cfw dir");
+    std::fs::write(
+        temp.path().join(".cfw/reducers.toml"),
+        r#"
+[[reducers]]
+name = "bad-regex"
+match_command = "^seq "
+strip_lines_matching = ["["]
+"#,
+    )
+    .expect("project reducers");
+
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    run.current_dir(temp.path())
+        .env("CFW_DATA_DIR", data.path())
+        .args(["run", "--", "seq", "3"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reducer `bad-regex`"))
+        .stderr(predicate::str::contains(
+            "invalid `strip_lines_matching` regex",
+        ));
+}
+
+#[test]
 fn receipt_schema_matches_json_contract() {
     let temp = TempDir::new().expect("temp dir");
 
