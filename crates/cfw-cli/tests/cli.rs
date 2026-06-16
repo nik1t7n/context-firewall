@@ -945,6 +945,98 @@ fn learn_suggests_rules_from_repeated_failed_commands() {
 }
 
 #[test]
+fn session_reducers_reports_quality_stats() {
+    let temp = TempDir::new().expect("temp dir");
+
+    let mut first_test = Command::cargo_bin("cfw").expect("cfw binary");
+    let output = first_test
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "quality-session")
+        .args([
+            "run",
+            "--kind",
+            "test-output",
+            "--",
+            "sh",
+            "-c",
+            "i=0; while [ $i -lt 260 ]; do printf 'test result: ok '; i=$((i+1)); done",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let span_id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("span id");
+
+    let mut second_test = Command::cargo_bin("cfw").expect("cfw binary");
+    second_test
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "quality-session")
+        .args([
+            "run",
+            "--kind",
+            "test-output",
+            "--",
+            "sh",
+            "-c",
+            "i=0; while [ $i -lt 260 ]; do printf 'test result: ok '; i=$((i+1)); done",
+        ])
+        .assert()
+        .success();
+
+    let mut show = Command::cargo_bin("cfw").expect("cfw binary");
+    show.env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "quality-session")
+        .args(["show", span_id])
+        .assert()
+        .success();
+
+    let mut generic_failure = Command::cargo_bin("cfw").expect("cfw binary");
+    generic_failure
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "quality-session")
+        .args([
+            "run",
+            "--kind",
+            "generic",
+            "--",
+            "sh",
+            "-c",
+            "printf generic; exit 3",
+        ])
+        .assert()
+        .failure();
+
+    let mut generic_signal = Command::cargo_bin("cfw").expect("cfw binary");
+    generic_signal
+        .env("CFW_DATA_DIR", temp.path())
+        .env("CFW_SESSION", "quality-session")
+        .args(["run", "--kind", "generic", "--", "sh", "-c", "kill -9 $$"])
+        .assert()
+        .failure();
+
+    let mut session = Command::cargo_bin("cfw").expect("cfw binary");
+    session
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["session", "--reducers"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reducer quality:"))
+        .stdout(predicate::str::contains("test-output:"))
+        .stdout(predicate::str::contains("generic:"))
+        .stdout(predicate::str::contains("raw_fetch_rate=50.0%"))
+        .stdout(predicate::str::contains("rerun_rate=100.0%"))
+        .stdout(predicate::str::contains("failure_rate=100.0%"))
+        .stdout(predicate::str::contains(
+            "failures_by_exit=3:1,signal_or_unknown:1",
+        ));
+}
+
+#[test]
 fn install_agent_configs_for_gemini_claude_cursor_and_antigravity() {
     let temp = TempDir::new().expect("temp dir");
     let home = temp.path().join("home");
