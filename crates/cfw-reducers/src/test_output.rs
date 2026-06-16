@@ -11,18 +11,23 @@ impl Reducer for TestOutputReducer {
 
     fn reduce(&self, input: &str) -> Reduction {
         let failure_re = Regex::new(
-            r"(?i)(fail|failed|failure|error|panic|assert|AssertionError|Traceback|expected|actual)",
+            r"(?i)(fail|failed|failure|error|panic|assert|AssertionError|Traceback|expected|actual|exception|fatal|timeout|denied)",
         )
         .expect("valid failure regex");
         let summary_re =
-            Regex::new(r"(?i)(test result:|passed|failed|errors?|failures?|collected)")
+            Regex::new(r"(?i)(test result:|passed|failed|errors?|failures?|collected|no changes\.|plan:|checks? completed|checks? pending)")
                 .expect("valid summary regex");
+        let diagnostic_re = Regex::new(
+            r"(?i)(\berror TS\d+\b|^\s*\d+:\d+\s+(error|warning)\b|^\s*[~+\-]\s+resource\b|^\s*# .+ will be|npm ERR!|pnpm ERR!|yarn ERR!)",
+        )
+        .expect("valid diagnostic regex");
 
         let mut kept = Vec::new();
         let lines: Vec<&str> = input.lines().collect();
         for (idx, line) in lines.iter().enumerate() {
             let near_failure = failure_re.is_match(line)
                 || summary_re.is_match(line)
+                || diagnostic_re.is_match(line)
                 || idx < 20
                 || idx + 20 >= lines.len();
             if near_failure {

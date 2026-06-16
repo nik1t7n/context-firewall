@@ -48,6 +48,38 @@ fn test_output_reducer_preserves_failure_signal() {
 }
 
 #[test]
+fn test_output_reducer_preserves_tool_diagnostics() {
+    let input = (1..=80)
+        .map(|line| {
+            if line == 35 {
+                "src/index.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'."
+                    .to_string()
+            } else if line == 42 {
+                "  9:7  warning  'unused' is assigned a value but never used  no-unused-vars"
+                    .to_string()
+            } else if line == 55 {
+                "  # aws_instance.web will be updated in-place".to_string()
+            } else if line == 56 {
+                "  ~ resource \"aws_instance\" \"web\" {".to_string()
+            } else if line == 70 {
+                "Plan: 0 to add, 1 to change, 0 to destroy.".to_string()
+            } else {
+                format!("noise line {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let reduction = reduce("test-output", &input);
+
+    assert!(reduction.omitted);
+    assert!(reduction.output.contains("error TS2322"));
+    assert!(reduction.output.contains("no-unused-vars"));
+    assert!(reduction.output.contains("will be updated in-place"));
+    assert!(reduction.output.contains("Plan: 0 to add"));
+}
+
+#[test]
 fn git_reducer_preserves_hunks_and_changed_lines() {
     let input = [
         "diff --git a/src/lib.rs b/src/lib.rs",
