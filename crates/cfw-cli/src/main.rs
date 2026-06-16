@@ -1514,10 +1514,51 @@ fn mcp_tools() -> Vec<serde_json::Value> {
                 "properties": {
                     "span_id": {"type": "string"},
                     "lines": {"type": "string", "description": "Optional 1-based range A:B."},
+                    "grep": {"type": "string", "description": "Optional plain-text pattern to search within the span."},
+                    "around": {"type": "integer", "minimum": 0, "description": "Optional surrounding line count for grep."},
                     "force": {"type": "boolean", "description": "Bypass secret-like output guard."},
                     "cwd": {"type": "string", "description": "Optional working directory."}
                 },
-                "required": ["span_id"]
+                "required": ["span_id"],
+                "oneOf": [
+                    {
+                        "not": {
+                            "anyOf": [
+                                {"required": ["lines"]},
+                                {"required": ["grep"]},
+                                {"required": ["around"]}
+                            ]
+                        }
+                    },
+                    {
+                        "required": ["lines"],
+                        "not": {
+                            "anyOf": [
+                                {"required": ["grep"]},
+                                {"required": ["around"]}
+                            ]
+                        }
+                    },
+                    {
+                        "required": ["grep"],
+                        "not": {"required": ["lines"]}
+                    }
+                ]
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_search",
+            "title": "Search stored Context Firewall spans",
+            "description": "Search recent raw span artifacts for a plain-text pattern.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Plain-text pattern to search for."},
+                    "limit": {"type": "integer", "description": "Number of recent spans to inspect."},
+                    "force": {"type": "boolean", "description": "Bypass secret-like output guard."},
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                },
+                "required": ["pattern"]
             }
         }),
         serde_json::json!({
@@ -1528,6 +1569,42 @@ fn mcp_tools() -> Vec<serde_json::Value> {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Maximum span count."},
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_gain",
+            "title": "Show Context Firewall gain",
+            "description": "Return recent local token savings from the span ledger.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Number of recent spans to inspect."},
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_discover",
+            "title": "Discover Context Firewall coverage gaps",
+            "description": "Return commands with low savings, repeated passthrough, large raw output, and repeated unchanged output.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Number of recent spans to inspect."},
+                    "cwd": {"type": "string", "description": "Optional working directory."}
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "cfw_session",
+            "title": "Show Context Firewall session summary",
+            "description": "Return recent CFW-routed command count, reducer mix, delivery mix, and top commands.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Number of recent spans to inspect."},
                     "cwd": {"type": "string", "description": "Optional working directory."}
                 }
             }
@@ -1563,11 +1640,9 @@ fn call_mcp_tool(params: &serde_json::Value) -> Result<serde_json::Value> {
     let argv = match name {
         "cfw_run" => mcp_run_args(&args)?,
         "cfw_show" => mcp_show_args(&args)?,
+        "cfw_search" => mcp_search_args(&args)?,
         "cfw_spans" => {
-            let limit = args
-                .get("limit")
-                .and_then(|value| value.as_i64())
-                .unwrap_or(20);
+            let limit = mcp_limit(&args, 20);
             vec![
                 "spans".to_string(),
                 "--json".to_string(),
@@ -1575,6 +1650,9 @@ fn call_mcp_tool(params: &serde_json::Value) -> Result<serde_json::Value> {
                 limit.to_string(),
             ]
         }
+        "cfw_gain" => mcp_limited_command("gain", &args, 1000),
+        "cfw_discover" => mcp_limited_command("discover", &args, 1000),
+        "cfw_session" => mcp_limited_command("session", &args, 1000),
         "cfw_receipt" => vec!["receipt".to_string(), "--json".to_string()],
         _ => bail!("unknown Context Firewall tool: {name}"),
     };
@@ -1616,10 +1694,50 @@ fn mcp_show_args(args: &serde_json::Value) -> Result<Vec<String>> {
     if let Some(lines) = args.get("lines").and_then(|value| value.as_str()) {
         argv.extend(["--lines".to_string(), lines.to_string()]);
     }
+    if let Some(grep) = args.get("grep").and_then(|value| value.as_str()) {
+        argv.extend(["--grep".to_string(), grep.to_string()]);
+    }
+    if let Some(around) = args.get("around") {
+        let around = around
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("cfw_show around must be >= 0"))?;
+        argv.extend(["--around".to_string(), around.to_string()]);
+    }
     if args.get("force").and_then(|value| value.as_bool()) == Some(true) {
         argv.push("--force".to_string());
     }
     Ok(argv)
+}
+
+fn mcp_search_args(args: &serde_json::Value) -> Result<Vec<String>> {
+    let pattern = args
+        .get("pattern")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("cfw_search requires pattern"))?;
+    let mut argv = vec![
+        "search-spans".to_string(),
+        pattern.to_string(),
+        "--limit".to_string(),
+        mcp_limit(args, 50).to_string(),
+    ];
+    if args.get("force").and_then(|value| value.as_bool()) == Some(true) {
+        argv.push("--force".to_string());
+    }
+    Ok(argv)
+}
+
+fn mcp_limited_command(command: &str, args: &serde_json::Value, default_limit: i64) -> Vec<String> {
+    vec![
+        command.to_string(),
+        "--limit".to_string(),
+        mcp_limit(args, default_limit).to_string(),
+    ]
+}
+
+fn mcp_limit(args: &serde_json::Value, default_limit: i64) -> i64 {
+    args.get("limit")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(default_limit)
 }
 
 fn run_cfw_child(args: &[String], cwd: Option<&Path>) -> Result<(bool, String)> {
