@@ -792,8 +792,70 @@ fn mcp_lists_context_firewall_tools() {
     );
     let tools = messages[1]["result"]["tools"].as_array().expect("tools");
     assert!(tools.iter().any(|tool| tool["name"] == "cfw_run"));
-    assert!(tools.iter().any(|tool| tool["name"] == "cfw_show"));
+    let show_tool = tools
+        .iter()
+        .find(|tool| tool["name"] == "cfw_show")
+        .expect("cfw_show tool");
+    assert_eq!(
+        show_tool["inputSchema"]["properties"]["around"]["minimum"],
+        0
+    );
+    assert!(show_tool["inputSchema"]["oneOf"].is_array());
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_search"));
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_gain"));
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_discover"));
+    assert!(tools.iter().any(|tool| tool["name"] == "cfw_session"));
     assert!(tools.iter().any(|tool| tool["name"] == "cfw_receipt"));
+}
+
+#[test]
+fn mcp_calls_analytics_and_search_tools() {
+    let temp = TempDir::new().expect("temp dir");
+    let mut run = Command::cargo_bin("cfw").expect("cfw binary");
+    let output = run
+        .env("CFW_DATA_DIR", temp.path())
+        .args(["run", "--", "printf", "alpha\nneedle\n"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("utf8 stdout");
+    let span_id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("span: cfw://span/"))
+        .expect("span id");
+
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("cfw"))
+        .env("CFW_DATA_DIR", temp.path())
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn cfw mcp");
+
+    {
+        let stdin = child.stdin.as_mut().expect("stdin");
+        for message in [
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"cfw_gain","arguments":{"limit":5}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cfw_search","arguments":{"pattern":"needle","limit":5}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"cfw_show","arguments":{"span_id":span_id,"grep":"needle","around":1}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"cfw_show","arguments":{"span_id":span_id,"grep":"needle","around":-1}}}),
+        ] {
+            writeln!(stdin, "{message}").expect("write mcp request");
+        }
+    }
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("mcp output");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    assert!(stdout.contains("Context Firewall Gain"));
+    assert!(stdout.contains("needle"));
+    assert!(stdout.contains("1: alpha"));
+    assert!(stdout.contains("2: needle"));
+    assert!(stdout.contains("cfw_show around must be >= 0"));
 }
 
 #[test]
