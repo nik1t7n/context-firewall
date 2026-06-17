@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
-cfw-core = { path = "../cfw-core", version = "0.1.0" }
+cfw-core = { path = "../cfw-core", version = "0.2.0" }
 chrono.workspace = true
 directories.workspace = true
 rusqlite.workspace = true

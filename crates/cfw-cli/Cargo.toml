@@ -19,11 +19,11 @@ dist = true
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
-cfw-codex = { path = "../cfw-codex", version = "0.1.0" }
-cfw-core = { path = "../cfw-core", version = "0.1.0" }
-cfw-policy = { path = "../cfw-policy", version = "0.1.0" }
-cfw-reducers = { path = "../cfw-reducers", version = "0.1.0" }
-cfw-store = { path = "../cfw-store", version = "0.1.0" }
+cfw-codex = { path = "../cfw-codex", version = "0.2.0" }
+cfw-core = { path = "../cfw-core", version = "0.2.0" }
+cfw-policy = { path = "../cfw-policy", version = "0.2.0" }
+cfw-reducers = { path = "../cfw-reducers", version = "0.2.0" }
+cfw-store = { path = "../cfw-store", version = "0.2.0" }
 chrono.workspace = true
 clap.workspace = true
 regex.workspace = true
