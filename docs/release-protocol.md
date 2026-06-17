@@ -10,6 +10,25 @@ install path, real binary, and real release artifacts have been checked.
 
 No skipped checks. No “probably fine”. No untested tags.
 
+## Versioning
+
+Use SemVer, but treat `0.x` releases as real public releases. Do not use the
+minor number as a “something changed” counter.
+
+- **Patch: `0.2.0 -> 0.2.1`** for fixes, docs, CI, release workflow changes,
+  installer fixes, dependency bumps, clearer errors, and small behavior
+  corrections that do not add a new user-facing capability.
+- **Minor: `0.2.0 -> 0.3.0`** only for a new user-facing capability: a new
+  command, install mode, supported agent, output retrieval feature, routing
+  feature, or meaningful workflow improvement users can choose to use.
+- **Major: `0.x -> 1.0` or `1.x -> 2.0`** for breaking CLI changes, removed
+  commands or flags, incompatible storage/schema changes, or changed behavior
+  that can break existing automation.
+
+If two bumps both seem plausible, choose the smaller one. A release-smoke fix is
+a patch. A new release-smoke feature is still a patch unless users get a new
+`cfw` capability from it.
+
 ## Before Tagging
 
 Run these from a clean `main`:
