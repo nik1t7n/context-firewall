@@ -59,6 +59,26 @@ cfw run -- cargo test
 
 The agent sees the signal. You keep the evidence.
 
+Need the full command reference? See the [usage guide](docs/usage.md).
+
+## Features
+
+- **Less context waste**: agents see the useful part of tests, diffs, searches,
+  logs, and big files instead of the whole wall of output.
+- **Full evidence stays safe**: raw stdout/stderr is kept locally, so the agent
+  can pull the exact proof later.
+- **Automatic routing**: supported agents can route noisy commands through
+  Context Firewall without relying on memory or discipline.
+- **Searchable history**: find the error, line, JSON value, or old command output
+  without rerunning the command.
+- **Clear value numbers**: see how many tokens were saved, which commands burn
+  context, and whether agents are actually using the tool.
+- **Self-improving workflow**: Context Firewall can point out repeated misses and
+  suggest better project rules.
+- **Works with real coding noise**: tests, diffs, search results, logs, JSON,
+  Docker, Kubernetes, Terraform, TypeScript, ESLint, and GitHub CLI output.
+- **Local by default**: no cloud account, no hosted proxy, no raw output loss.
+
 ## Quick Start For Agents
 
 If you are a human, paste this prompt into the coding agent you use for your
@@ -86,6 +106,9 @@ retrieval.
      report the exact blocker.
 
 2. Install the adapter for the agent host you are running in:
+   - Codex wrapper guidance: `cfw install codex --write-agents`
+   - Codex hook-native rewrite where supported:
+     `cfw install codex --mode hook-native --write-agents`
    - Gemini CLI: `cfw install gemini`
    - Antigravity: `cfw install antigravity`
    - Claude Code: `cfw install claude`
@@ -95,7 +118,8 @@ retrieval.
 3. Verify the setup:
    - Run `cfw receipt --json`.
    - If MCP tools are available, call `cfw_receipt`.
-   - Confirm that `cfw_run`, `cfw_show`, `cfw_spans`, and `cfw_receipt` are
+   - Confirm that `cfw_run`, `cfw_show`, `cfw_search`, `cfw_gain`,
+     `cfw_discover`, `cfw_session`, `cfw_spans`, and `cfw_receipt` are
      available, or that `cfw run -- <command>` works from the shell.
 
 4. Use Context Firewall from now on:
@@ -107,7 +131,9 @@ retrieval.
 5. When exact output is needed:
    - List spans: `cfw_spans` or `cfw spans`
    - Retrieve lines: `cfw_show` or `cfw show <span-id> --lines 120:180`
-   - Check savings: `cfw_receipt` or `cfw receipt --json`
+   - Search raw evidence: `cfw show <span-id> --grep "panic" --around 3`
+   - Extract JSON: `cfw show <span-id> --json-path '$.errors[0]'`
+   - Check savings: `cfw_gain`, `cfw_session`, or `cfw receipt --json`
 ```
 
 Context Firewall uses MCP over stdio, so compatible agent clients can run
@@ -145,10 +171,14 @@ Tools exposed over MCP:
 
 | Tool | Purpose |
 | --- | --- |
-| `cfw_run` | run a real command through Context Firewall |
-| `cfw_show` | retrieve exact stored span output |
-| `cfw_spans` | list recent spans |
-| `cfw_receipt` | inspect recent token accounting |
+| `cfw_run` | run commands without flooding context |
+| `cfw_show` | pull exact proof from stored output |
+| `cfw_search` | search previous command output |
+| `cfw_gain` | show saved context |
+| `cfw_discover` | find commands that waste context |
+| `cfw_session` | show adoption and quality |
+| `cfw_spans` | list recent command outputs |
+| `cfw_receipt` | show token accounting |
 
 ## The Aha Moment
 
@@ -228,48 +258,28 @@ saved:    155,270 estimated tokens
 
 Context Firewall is agent-facing infrastructure, not a log viewer.
 
-- MCP server for agent tools
-- Installers for Gemini CLI, Antigravity, Claude Code, Cursor, and generic agents
-- Real command execution
-- Local raw artifacts
-- Deterministic reducers
-- Span handles for exact evidence
-- Receipts for token accounting
-- Policy gates for obvious context waste
+- Agent tools and installers for common coding agents
+- Automatic command routing where supported
+- Real command execution, never pretend output
+- Local raw evidence
+- Compact summaries for noisy commands
+- Exact retrieval when the agent needs proof
+- Search across previous command output
+- Analytics for savings, adoption, and weak spots
+- Suggestions from repeated misses
+- Guardrails for obvious context waste
 - No cloud account
 - No hosted proxy
 - No raw output loss
 
-## Reducers
+## How It Handles Noise
 
-Context Firewall understands the noisy shapes agents hit every day:
+Context Firewall does not try to perfectly understand every possible terminal
+format. That would be brittle.
 
-| Reducer | Keeps |
-| --- | --- |
-| `test-output` | failures, panics, assertions, summaries, head, tail |
-| `git` | file headers, hunks, changed lines, conflict markers |
-| `search` | matched files, counts, capped examples per file |
-| `log` | severity lines, error context, head, tail |
-| `json` | object shape, collection sizes, scalar samples |
-| `outline` | headings, imports, declarations, package names |
-| `browser-snapshot` | roles, diagnostics, key accessible nodes |
-
-Project-specific line reducers can live in `.cfw/reducers.toml`:
-
-```toml
-[[reducers]]
-name = "terraform-plan"
-match_command = "^terraform plan"
-strip_lines_matching = ["^Refreshing state", "^Reading\\.\\.\\."]
-keep_lines_matching = ["Error:", "Plan:", "^  #"]
-max_lines = 80
-on_empty = "terraform plan: no relevant output"
-```
-
-Supported fields are `match_command`, `strip_lines_matching`,
-`keep_lines_matching`, `max_lines`, `tail_lines`, and `on_empty`. Project
-reducers run before the user-level reducers file and only apply to default
-`cfw run` output; explicit `--kind` still uses the built-in reducer.
+Instead, it keeps the important signals, stores the full evidence, and measures
+when the summary was not good enough. If agents keep asking for the raw output
+or rerunning the same command, that is a sign the project rules should improve.
 
 ## Common Workflow
 
@@ -283,8 +293,19 @@ cfw spans
 # retrieve exact evidence
 cfw show 019ecaf49aab746395d2e02d31fa5d76 --lines 40:90
 
-# see context savings
-cfw receipt
+# search raw evidence without knowing line numbers
+cfw show 019ecaf49aab746395d2e02d31fa5d76 --grep "panic" --around 3
+
+# extract JSON from stored raw output
+cfw show 019ecaf49aab746395d2e02d31fa5d76 --json-path '$.errors[0]'
+
+# see context savings and adoption
+cfw gain
+cfw session --reducers
+
+# discover weak spots and suggested rules
+cfw discover
+cfw learn
 ```
 
 ## Install For Development
@@ -316,6 +337,7 @@ The broader goal is simple:
 ## Links
 
 - [Comparison](docs/comparison.md)
+- [Usage guide](docs/usage.md)
 - [Security model](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 - [Install guide](INSTALL.md)
