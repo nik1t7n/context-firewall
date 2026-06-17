@@ -19,6 +19,8 @@ use toml::Value as TomlValue;
 
 const POLICY_ENGINE_VERSION: &str = "cfw-policy-v1";
 const REPEAT_FINGERPRINT_SCHEMA_VERSION: &str = "cfw.repeat_fingerprint.v1";
+const LATEST_RELEASE_URL: &str = "https://registry.npmjs.org/@nik1t7n%2fcontext-firewall/latest";
+const UPDATE_CHECK_CACHE_SECONDS: i64 = 60 * 60 * 24;
 const ENV_REPEAT_ALLOWLIST: &[&str] = &[
     "LANG",
     "LC_ALL",
@@ -83,6 +85,8 @@ enum Commands {
     Doctor(DoctorArgs),
     /// Run real integration canaries.
     Canary(CanaryArgs),
+    /// Check npm latest metadata for a newer Context Firewall release.
+    UpdateCheck(UpdateCheckArgs),
     /// Run Context Firewall as a stdio MCP server.
     Mcp,
 }
@@ -243,6 +247,13 @@ struct CanaryArgs {
 }
 
 #[derive(Debug, Args)]
+struct UpdateCheckArgs {
+    /// Ignore the local daily cache and call the release endpoint now.
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Debug, Args)]
 struct ReceiptArgs {
     /// Emit JSON instead of terminal text.
     #[arg(long)]
@@ -309,7 +320,8 @@ fn main() -> Result<()> {
         print_launch_screen();
         return Ok(());
     };
-    match command {
+    let should_check_updates = !matches!(command, Commands::Mcp | Commands::UpdateCheck(_));
+    let result = match command {
         Commands::Install(args) => install(args),
         Commands::Uninstall(args) => uninstall(args),
         Commands::FirstRun => first_run(),
@@ -328,8 +340,16 @@ fn main() -> Result<()> {
         Commands::Learn(args) => learn(args),
         Commands::Doctor(args) => doctor(args),
         Commands::Canary(args) => canary(args),
+        Commands::UpdateCheck(args) => update_check(args),
         Commands::Mcp => mcp(),
+    };
+    if result.is_ok()
+        && should_check_updates
+        && let Ok(paths) = StorePaths::discover()
+    {
+        maybe_print_update_notice(&paths);
     }
+    result
 }
 
 fn first_run() -> Result<()> {
@@ -1256,6 +1276,7 @@ fn run_command(args: RunArgs) -> Result<()> {
     println!("  cfw show {span_id}");
     println!("  cfw show {span_id} --lines 120:180");
     println!("[/context-firewall]");
+    maybe_print_update_notice(&paths);
 
     std::process::exit(output.status.code().unwrap_or(1));
 }
@@ -3032,6 +3053,208 @@ fn canary(args: CanaryArgs) -> Result<()> {
     bail!("{}", result.reason)
 }
 
+fn update_check(args: UpdateCheckArgs) -> Result<()> {
+    let paths = StorePaths::discover()?;
+    let status = latest_release_status(&paths, args.force)?;
+    println!("Context Firewall update check");
+    println!("  current: {}", status.current);
+    println!("  latest: {}", status.latest);
+    println!("  release: {}", status.url);
+    if status.update_available {
+        println!("  status: update_available");
+        println!("  upgrade: brew upgrade cfw");
+        println!("  upgrade_npm: npm install -g @nik1t7n/context-firewall");
+    } else {
+        println!("  status: current");
+    }
+    Ok(())
+}
+
+fn maybe_print_update_notice(paths: &StorePaths) {
+    if std::env::var_os("CFW_NO_UPDATE_CHECK").is_some() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    let Ok(status) = latest_release_status(paths, false) else {
+        return;
+    };
+    if status.update_available && !update_notice_fresh(paths, &status.latest) {
+        eprintln!(
+            "cfw update available: {} -> {}",
+            status.current, status.latest
+        );
+        eprintln!("upgrade with `brew upgrade cfw` or `npm install -g @nik1t7n/context-firewall`");
+        let _ = write_update_notice(paths, &status.latest);
+    }
+}
+
+#[derive(Debug)]
+struct UpdateStatus {
+    current: String,
+    latest: String,
+    url: String,
+    update_available: bool,
+}
+
+fn latest_release_status(paths: &StorePaths, force: bool) -> Result<UpdateStatus> {
+    if !force && let Some(status) = cached_update_status(paths)? {
+        return Ok(status);
+    }
+    let json = fetch_latest_release_json()?;
+    let latest = json
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("npm latest metadata missing version"))?
+        .trim_start_matches('v')
+        .to_string();
+    let url = json
+        .get("homepage")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("https://github.com/nik1t7n/context-firewall/releases/latest")
+        .to_string();
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let status = UpdateStatus {
+        update_available: version_is_newer(&latest, &current),
+        current,
+        latest,
+        url,
+    };
+    write_update_cache(paths, &status)?;
+    Ok(status)
+}
+
+fn fetch_latest_release_json() -> Result<serde_json::Value> {
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "5",
+            "-H",
+            "User-Agent: context-firewall-update-check",
+            LATEST_RELEASE_URL,
+        ])
+        .output()
+        .context("could not run curl for update check")?;
+    if !output.status.success() {
+        bail!(
+            "update check failed: curl exited with {}",
+            output.status.code().unwrap_or(1)
+        );
+    }
+    serde_json::from_slice(&output.stdout).context("could not parse npm latest metadata JSON")
+}
+
+fn cached_update_status(paths: &StorePaths) -> Result<Option<UpdateStatus>> {
+    if !update_check_cache_fresh(paths) {
+        return Ok(None);
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(update_check_cache_path(paths))?)
+            .context("could not parse update check cache")?;
+    let latest = value
+        .get("latest")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let url = value
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("https://github.com/nik1t7n/context-firewall/releases/latest")
+        .to_string();
+    Ok(Some(UpdateStatus {
+        update_available: version_is_newer(&latest, &current),
+        current,
+        latest,
+        url,
+    }))
+}
+
+fn update_check_cache_fresh(paths: &StorePaths) -> bool {
+    let Ok(content) = std::fs::read_to_string(update_check_cache_path(paths)) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(checked_at) = value.get("checked_at").and_then(serde_json::Value::as_i64) else {
+        return false;
+    };
+    Utc::now().timestamp() - checked_at < UPDATE_CHECK_CACHE_SECONDS
+}
+
+fn write_update_cache(paths: &StorePaths, status: &UpdateStatus) -> Result<()> {
+    std::fs::create_dir_all(&paths.data_dir)
+        .with_context(|| format!("could not create {}", paths.data_dir.display()))?;
+    let value = serde_json::json!({
+        "checked_at": Utc::now().timestamp(),
+        "latest": status.latest,
+        "url": status.url,
+    });
+    std::fs::write(
+        update_check_cache_path(paths),
+        serde_json::to_vec_pretty(&value)?,
+    )
+    .context("could not write update check cache")?;
+    Ok(())
+}
+
+fn update_check_cache_path(paths: &StorePaths) -> PathBuf {
+    paths.data_dir.join("update-check.json")
+}
+
+fn update_notice_fresh(paths: &StorePaths, latest: &str) -> bool {
+    let Ok(content) = std::fs::read_to_string(update_notice_path(paths)) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(notified_at) = value.get("notified_at").and_then(serde_json::Value::as_i64) else {
+        return false;
+    };
+    let notified_latest = value
+        .get("latest")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    notified_latest == latest && Utc::now().timestamp() - notified_at < UPDATE_CHECK_CACHE_SECONDS
+}
+
+fn write_update_notice(paths: &StorePaths, latest: &str) -> Result<()> {
+    std::fs::create_dir_all(&paths.data_dir)
+        .with_context(|| format!("could not create {}", paths.data_dir.display()))?;
+    let value = serde_json::json!({
+        "notified_at": Utc::now().timestamp(),
+        "latest": latest,
+    });
+    std::fs::write(
+        update_notice_path(paths),
+        serde_json::to_vec_pretty(&value)?,
+    )
+    .context("could not write update notice cache")?;
+    Ok(())
+}
+
+fn update_notice_path(paths: &StorePaths) -> PathBuf {
+    paths.data_dir.join("update-notice.json")
+}
+
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    version_parts(latest) > version_parts(current)
+}
+
+fn version_parts(version: &str) -> [u64; 3] {
+    let mut parts = [0, 0, 0];
+    for (idx, part) in version
+        .trim_start_matches('v')
+        .split(['.', '-'])
+        .take(3)
+        .enumerate()
+    {
+        parts[idx] = part.parse().unwrap_or(0);
+    }
+    parts
+}
+
 fn current_session_id() -> String {
     std::env::var("CFW_SESSION").unwrap_or_else(|_| "local".to_string())
 }
@@ -3102,4 +3325,17 @@ fn remove_span_artifacts(span: &SpanRecord) -> Result<usize> {
         }
     }
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_is_newer;
+
+    #[test]
+    fn compares_release_versions() {
+        assert!(version_is_newer("0.2.0", "0.1.9"));
+        assert!(version_is_newer("v1.0.0", "0.9.9"));
+        assert!(!version_is_newer("0.2.0", "0.2.0"));
+        assert!(!version_is_newer("0.1.9", "0.2.0"));
+    }
 }

@@ -60,6 +60,7 @@ cfw run -- cargo test
 The agent sees the signal. You keep the evidence.
 
 Need the full command reference? See the [usage guide](docs/usage.md).
+Maintaining releases? Follow the [release protocol](docs/release-protocol.md).
 
 ## Features
 
@@ -75,6 +76,8 @@ Need the full command reference? See the [usage guide](docs/usage.md).
   context, and whether agents are actually using the tool.
 - **Self-improving workflow**: Context Firewall can point out repeated misses and
   suggest better project rules.
+- **Update reminders**: the CLI can check the latest release and nudge users
+  when a newer version is available.
 - **Works with real coding noise**: tests, diffs, search results, logs, JSON,
   Docker, Kubernetes, Terraform, TypeScript, ESLint, and GitHub CLI output.
 - **Local by default**: no cloud account, no hosted proxy, no raw output loss.

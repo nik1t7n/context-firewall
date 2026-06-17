@@ -164,7 +164,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "cfw"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "cfw-codex"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "cfw-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "cfw-policy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "cfw-reducers"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "regex",
  "serde",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "cfw-store"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",

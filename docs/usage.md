@@ -299,6 +299,18 @@ Optional Codex binary/model:
 cfw canary codex --codex-bin codex --model <model>
 ```
 
+## Updates
+
+Check whether a newer release is available:
+
+```bash
+cfw update-check --force
+```
+
+In an interactive terminal, Context Firewall also checks at most once a day and
+prints a short upgrade note when a newer release exists. Set
+`CFW_NO_UPDATE_CHECK=1` to disable the reminder.
+
 ## Common Recipes
 
 Run tests without flooding context:
@@ -333,4 +345,3 @@ Find rules to improve:
 cfw discover
 cfw learn
 ```
-

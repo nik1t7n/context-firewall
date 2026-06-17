@@ -12,3 +12,9 @@ Use Context Firewall for noisy terminal output.
 
 Keep raw evidence on disk. Keep agent context clean.
 <!-- context-firewall:end -->
+
+## Release Safety
+
+Context Firewall has real users. Do not publish or tag a release until
+`docs/release-protocol.md` has passed end to end against the real build,
+real GitHub release artifacts, npm, and Homebrew.
